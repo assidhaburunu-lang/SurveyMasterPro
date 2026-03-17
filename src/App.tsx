@@ -6,6 +6,7 @@ import {
   LogOut, 
   ClipboardList, 
   BarChart3, 
+  TrendingUp,
   User, 
   FileSpreadsheet, 
   CheckCircle2,
@@ -194,30 +195,160 @@ const Navbar = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  if (!user) return null;
-
   return (
     <nav className="bg-white border-b border-zinc-200 px-6 py-4 flex justify-between items-center sticky top-0 z-50">
       <div className="flex items-center gap-2">
-        <div className="bg-indigo-600 p-2 rounded-lg cursor-pointer" onClick={() => navigate('/')}>
-          <ClipboardList className="text-white w-5 h-5" />
+        <div className="bg-indigo-600 p-2 rounded-lg cursor-pointer flex items-center gap-2" onClick={() => navigate('/')}>
+          <div className="relative">
+            <BarChart3 className="text-white w-5 h-5" />
+            <TrendingUp className="text-white w-2.5 h-2.5 absolute -top-0.5 -right-0.5" />
+          </div>
         </div>
-        <span className="font-bold text-xl tracking-tight text-zinc-900">SurveyMaster Pro</span>
+        <span className="font-black text-xl tracking-tight text-zinc-900 uppercase">Survey Master Pro</span>
       </div>
       <div className="flex items-center gap-6">
-        <div className="flex items-center gap-2 text-zinc-600">
-          <User className="w-4 h-4" />
-          <span className="text-sm font-medium">{user.username} ({user.role})</span>
-        </div>
-        <button 
-          onClick={async () => { await logout(); navigate('/login'); }}
-          className="flex items-center gap-2 text-sm font-semibold text-zinc-500 hover:text-red-600 transition-colors"
-        >
-          <LogOut className="w-4 h-4" />
-          Logout
-        </button>
+        {user ? (
+          <>
+            <div className="flex items-center gap-2 text-zinc-600">
+              <User className="w-4 h-4" />
+              <span className="text-sm font-medium">{user.username} ({user.role})</span>
+            </div>
+            <button 
+              onClick={async () => { await logout(); navigate('/login'); }}
+              className="flex items-center gap-2 text-sm font-semibold text-zinc-500 hover:text-red-600 transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              Logout
+            </button>
+          </>
+        ) : (
+          <Link 
+            to="/login" 
+            className="bg-indigo-600 text-white px-6 py-2 rounded-xl font-bold text-sm hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
+          >
+            Sign In
+          </Link>
+        )}
       </div>
     </nav>
+  );
+};
+
+const LandingPage = () => {
+  return (
+    <div className="min-h-[calc(100vh-73px)] bg-white">
+      {/* Hero Section */}
+      <div className="max-w-7xl mx-auto px-6 py-20 grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+        <motion.div 
+          initial={{ opacity: 0, x: -30 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.6 }}
+        >
+          <div className="inline-flex items-center gap-2 bg-indigo-50 text-indigo-600 px-4 py-2 rounded-full text-sm font-bold mb-6">
+            <Sparkles className="w-4 h-4" />
+            <span>Next-Generation Research Platform</span>
+          </div>
+          <h1 className="text-6xl font-black text-zinc-900 tracking-tight leading-[1.1] mb-6 uppercase">
+            Survey <span className="text-indigo-600">Master</span> Pro
+          </h1>
+          <p className="text-xl text-zinc-600 leading-relaxed mb-10 max-w-xl">
+            Empower your research with the most comprehensive survey platform. 
+            Bulk-upload questions from Excel, manage complex branching logic, 
+            and gather insights with professional-grade analytics.
+          </p>
+          <div className="flex flex-wrap gap-4">
+            <Link 
+              to="/login" 
+              className="bg-indigo-600 text-white px-10 py-5 rounded-2xl font-bold text-lg hover:bg-indigo-700 active:scale-[0.98] transition-all shadow-2xl shadow-indigo-200 flex items-center gap-2"
+            >
+              Get Started Now
+              <ChevronRight className="w-5 h-5" />
+            </Link>
+            <a 
+              href="#features" 
+              className="bg-zinc-100 text-zinc-700 px-10 py-5 rounded-2xl font-bold text-lg hover:bg-zinc-200 transition-all flex items-center gap-2"
+            >
+              Learn More
+            </a>
+          </div>
+        </motion.div>
+
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.6, delay: 0.2 }}
+          className="relative"
+        >
+          <div className="absolute -inset-4 bg-indigo-600/5 rounded-[40px] blur-3xl" />
+          <div className="relative bg-white rounded-[40px] border border-zinc-100 shadow-2xl overflow-hidden aspect-video lg:aspect-square">
+            <img 
+              src="https://picsum.photos/seed/surveymaster/1200/1200" 
+              alt="Survey Master Pro Dashboard" 
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
+            <div className="absolute bottom-8 left-8 right-8 text-white">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="bg-white/20 backdrop-blur-md p-2 rounded-lg">
+                  <BarChart3 className="w-6 h-6" />
+                </div>
+                <span className="font-black uppercase tracking-widest text-sm">Survey Master Pro</span>
+              </div>
+              <p className="text-white/80 font-medium">Professional Survey Software for Researchers</p>
+            </div>
+          </div>
+        </motion.div>
+      </div>
+
+      {/* Features Section */}
+      <div id="features" className="bg-zinc-50 py-24">
+        <div className="max-w-7xl mx-auto px-6">
+          <div className="text-center max-w-3xl mx-auto mb-20">
+            <h2 className="text-4xl font-black text-zinc-900 mb-6 uppercase">Why Choose Survey Master Pro?</h2>
+            <p className="text-zinc-600 text-lg">
+              Designed for researchers who need more than just a simple form. 
+              Our platform provides the tools necessary for deep data collection and analysis.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            {[
+              {
+                icon: <FileSpreadsheet className="w-8 h-8 text-indigo-600" />,
+                title: "Excel Bulk Upload",
+                desc: "Import hundreds of questions instantly from your existing spreadsheets. No more manual entry."
+              },
+              {
+                icon: <Users className="w-8 h-8 text-indigo-600" />,
+                title: "Advanced Role Management",
+                desc: "Separate admins from respondents. Assign specific surveys to specific users with ease."
+              },
+              {
+                icon: <PieChartIcon className="w-8 h-8 text-indigo-600" />,
+                title: "Real-time Analytics",
+                desc: "Visualize your data as it comes in. Export results to Excel for further deep-dive analysis."
+              }
+            ].map((feature, i) => (
+              <motion.div 
+                key={i}
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: i * 0.1 }}
+                className="bg-white p-10 rounded-[32px] border border-zinc-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all"
+              >
+                <div className="bg-indigo-50 w-16 h-16 rounded-2xl flex items-center justify-center mb-8">
+                  {feature.icon}
+                </div>
+                <h3 className="text-2xl font-bold text-zinc-900 mb-4">{feature.title}</h3>
+                <p className="text-zinc-600 leading-relaxed">{feature.desc}</p>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 };
 
@@ -253,11 +384,14 @@ const LoginPage = () => {
         className="max-w-md w-full bg-white rounded-3xl shadow-xl shadow-zinc-200/50 p-10 border border-zinc-100"
       >
         <div className="text-center mb-10">
-          <div className="inline-block bg-indigo-600 p-4 rounded-2xl mb-4">
-            <ClipboardList className="text-white w-8 h-8" />
+          <div className="inline-block bg-gradient-to-br from-indigo-600 to-cyan-500 p-4 rounded-2xl mb-4 shadow-lg shadow-indigo-200">
+            <div className="relative">
+              <BarChart3 className="text-white w-10 h-10" />
+              <TrendingUp className="text-white w-5 h-5 absolute -top-1 -right-1" />
+            </div>
           </div>
-          <h1 className="text-3xl font-bold text-zinc-900">Welcome Back</h1>
-          <p className="text-zinc-500 mt-2">Sign in to manage your surveys</p>
+          <h1 className="text-3xl font-black tracking-tight text-zinc-900 uppercase">Survey Master Pro</h1>
+          <p className="text-zinc-500 mt-2 font-medium">Professional Survey Software for Researchers</p>
         </div>
 
         <div className="space-y-4">
@@ -1001,7 +1135,12 @@ const AdminDashboard = () => {
       <div className="max-w-6xl mx-auto p-8">
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-8">
-            <h1 className="text-3xl font-bold text-zinc-900">Admin</h1>
+            <div className="flex items-center gap-3">
+              <div className="bg-indigo-600 p-2 rounded-lg">
+                <BarChart3 className="text-white w-6 h-6" />
+              </div>
+              <h1 className="text-2xl font-black text-zinc-900 tracking-tight uppercase">Survey Master Pro</h1>
+            </div>
             <div className="flex bg-zinc-100 p-1 rounded-xl">
               <button 
                 onClick={() => setView('surveys')}
@@ -1288,6 +1427,12 @@ const AdminDashboard = () => {
 
   return (
     <div className="max-w-6xl mx-auto p-8">
+      <div className="flex items-center gap-3 mb-10">
+        <div className="bg-indigo-600 p-1.5 rounded-lg">
+          <BarChart3 className="text-white w-5 h-5" />
+        </div>
+        <span className="text-sm font-black text-zinc-900 tracking-tight uppercase">Survey Master Pro</span>
+      </div>
       <div className="flex items-center justify-between mb-8">
         <div className="flex items-center gap-4">
           <button 
@@ -2097,7 +2242,13 @@ const RespondentDashboard = () => {
   if (!selectedSurvey) {
     return (
       <div className="max-w-4xl mx-auto p-8">
-        <h1 className="text-3xl font-bold text-zinc-900 mb-8">Available Surveys</h1>
+        <div className="flex items-center gap-3 mb-8">
+          <div className="bg-indigo-600 p-2 rounded-lg">
+            <BarChart3 className="text-white w-6 h-6" />
+          </div>
+          <h1 className="text-3xl font-black text-zinc-900 tracking-tight uppercase">Survey Master Pro</h1>
+        </div>
+        <h2 className="text-xl font-bold text-zinc-600 mb-6">Available Surveys</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {surveys.map((survey) => (
             <div key={survey.id} className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm hover:shadow-md transition-all">
@@ -2130,6 +2281,12 @@ const RespondentDashboard = () => {
 
   return (
     <div className={cn("max-w-3xl mx-auto p-8 pb-24", isRTL && "font-dhivehi")} dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className="flex items-center gap-3 mb-10">
+        <div className="bg-indigo-600 p-1.5 rounded-lg">
+          <BarChart3 className="text-white w-5 h-5" />
+        </div>
+        <span className="text-sm font-black text-zinc-900 tracking-tight uppercase">Survey Master Pro</span>
+      </div>
       <div className="mb-10 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <button 
@@ -2460,6 +2617,12 @@ const PublicSurvey = () => {
   return (
     <div className={cn("min-h-screen bg-zinc-50 py-12 px-4", isRTL && "font-dhivehi")} dir={isRTL ? 'rtl' : 'ltr'}>
       <div className="max-w-3xl mx-auto">
+        <div className="flex items-center gap-3 mb-10">
+          <div className="bg-indigo-600 p-1.5 rounded-lg">
+            <BarChart3 className="text-white w-5 h-5" />
+          </div>
+          <span className="text-sm font-black text-zinc-900 tracking-tight uppercase">Survey Master Pro</span>
+        </div>
         <div className="mb-10 flex items-center justify-between">
           <div className={cn(isRTL && "text-right")}>
             <h1 className="text-3xl font-bold text-zinc-900 mb-2">{survey.title}</h1>
@@ -2641,6 +2804,7 @@ export default function App() {
         <div className="min-h-screen bg-zinc-50 font-sans text-zinc-900">
           <Navbar />
           <Routes>
+            <Route path="/" element={<LandingPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/public/survey/:id" element={<PublicSurvey />} />
             <Route 
@@ -2659,7 +2823,6 @@ export default function App() {
                 </PrivateRoute>
               } 
             />
-            <Route path="/" element={<Navigate to="/login" />} />
           </Routes>
         </div>
       </BrowserRouter>
