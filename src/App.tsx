@@ -294,7 +294,7 @@ const LoginPage = () => {
         </div>
 
         <p className="text-center mt-8 text-zinc-500 text-sm">
-          Don't have an account? <Link to="/register" className="text-indigo-600 font-bold hover:underline">Register here</Link>
+          New users will be automatically registered upon their first sign-in.
         </p>
       </motion.div>
     </div>
@@ -318,6 +318,8 @@ const AdminDashboard = () => {
   const [stats, setStats] = useState<any[]>([]);
   const [questions, setQuestions] = useState<any[]>([]);
   const [respondents, setRespondents] = useState<any[]>([]);
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [view, setView] = useState<'surveys' | 'users'>('surveys');
   const [assignedUserIds, setAssignedUserIds] = useState<number[]>([]);
   const [activeTab, setActiveTab] = useState<'stats' | 'preview' | 'assignments'>('stats');
   const [vizPreferences, setVizPreferences] = useState<Record<number, string>>({});
@@ -359,6 +361,15 @@ const AdminDashboard = () => {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setRespondents(data);
+    });
+    return unsubscribe;
+  };
+
+  const fetchAllUsers = () => {
+    const q = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAllUsers(data);
     });
     return unsubscribe;
   };
@@ -405,8 +416,12 @@ const AdminDashboard = () => {
   };
 
   useEffect(() => {
-    const unsubscribe = fetchSurveys();
-    return () => unsubscribe();
+    const unsubSurveys = fetchSurveys();
+    const unsubAllUsers = fetchAllUsers();
+    return () => {
+      unsubSurveys();
+      unsubAllUsers();
+    };
   }, []);
 
   useEffect(() => {
@@ -970,85 +985,179 @@ const AdminDashboard = () => {
     }
   };
 
+  const handleToggleUserRole = async (userId: string, currentRole: string) => {
+    try {
+      const newRole = currentRole === 'admin' ? 'respondent' : 'admin';
+      await updateDoc(doc(db, 'users', userId), {
+        role: newRole
+      });
+    } catch (e) {
+      console.error('Failed to update user role:', e);
+    }
+  };
+
   if (!selectedSurvey) {
     return (
       <div className="max-w-6xl mx-auto p-8">
         <div className="flex items-center justify-between mb-8">
-          <h1 className="text-3xl font-bold text-zinc-900">Surveys</h1>
-          <button 
-            onClick={() => setShowCreateModal(true)}
-            className="bg-indigo-600 text-white px-6 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-indigo-700 transition-all"
-          >
-            <Plus className="w-5 h-5" />
-            Create Survey
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {surveys.map((survey) => (
-            <div key={survey.id} className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm hover:shadow-md transition-all group">
-              <div className="flex justify-between items-start mb-4">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-xl font-bold text-zinc-900">{survey.title}</h3>
-                  {survey.is_public && (
-                    <span className="bg-emerald-50 text-emerald-600 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                      <Globe className="w-3 h-3" />
-                      PUBLIC
-                    </span>
-                  )}
-                  {survey.language === 'dv' && (
-                    <span className="bg-amber-50 text-amber-600 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                      DV (RTL)
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  {survey.is_public && (
-                    <>
-                      <button 
-                        onClick={() => setShowQRModal(survey)}
-                        className="text-zinc-300 hover:text-indigo-600 transition-colors"
-                        title="Show QR Code"
-                      >
-                        <QrCode className="w-4 h-4" />
-                      </button>
-                      <button 
-                        onClick={() => {
-                          const url = `${window.location.origin}/public/survey/${survey.id}`;
-                          navigator.clipboard.writeText(url);
-                          alert('Public link copied to clipboard!');
-                        }}
-                        className="text-zinc-300 hover:text-indigo-600 transition-colors"
-                        title="Copy Public Link"
-                      >
-                        <LinkIcon className="w-4 h-4" />
-                      </button>
-                    </>
-                  )}
-                  <button 
-                    onClick={() => handleEditSurvey(survey)}
-                    className="text-zinc-300 hover:text-indigo-600 transition-colors"
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </button>
-                  <button 
-                    onClick={() => handleDeleteSurvey(survey.id)}
-                    className="text-zinc-300 hover:text-red-500 transition-colors"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-              <p className="text-zinc-500 text-sm mb-6 line-clamp-2">{survey.description}</p>
+          <div className="flex items-center gap-8">
+            <h1 className="text-3xl font-bold text-zinc-900">Admin</h1>
+            <div className="flex bg-zinc-100 p-1 rounded-xl">
               <button 
-                onClick={() => setSelectedSurvey(survey)}
-                className="w-full bg-zinc-100 text-zinc-900 font-bold py-3 rounded-xl hover:bg-indigo-600 hover:text-white transition-all"
+                onClick={() => setView('surveys')}
+                className={cn(
+                  "px-4 py-2 rounded-lg font-bold text-sm transition-all",
+                  view === 'surveys' ? "bg-white text-indigo-600 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+                )}
               >
-                Manage Survey
+                Surveys
+              </button>
+              <button 
+                onClick={() => setView('users')}
+                className={cn(
+                  "px-4 py-2 rounded-lg font-bold text-sm transition-all",
+                  view === 'users' ? "bg-white text-indigo-600 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+                )}
+              >
+                Users
               </button>
             </div>
-          ))}
+          </div>
+          {view === 'surveys' && (
+            <button 
+              onClick={() => setShowCreateModal(true)}
+              className="bg-indigo-600 text-white px-6 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-indigo-700 transition-all"
+            >
+              <Plus className="w-5 h-5" />
+              Create Survey
+            </button>
+          )}
         </div>
+
+        {view === 'surveys' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {surveys.map((survey) => (
+              <div key={survey.id} className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm hover:shadow-md transition-all group">
+                <div className="flex justify-between items-start mb-4">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xl font-bold text-zinc-900">{survey.title}</h3>
+                    {survey.is_public && (
+                      <span className="bg-emerald-50 text-emerald-600 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <Globe className="w-3 h-3" />
+                        PUBLIC
+                      </span>
+                    )}
+                    {survey.language === 'dv' && (
+                      <span className="bg-amber-50 text-amber-600 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                        DV (RTL)
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {survey.is_public && (
+                      <>
+                        <button 
+                          onClick={() => setShowQRModal(survey)}
+                          className="text-zinc-300 hover:text-indigo-600 transition-colors"
+                          title="Show QR Code"
+                        >
+                          <QrCode className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => {
+                            const url = `${window.location.origin}/public/survey/${survey.id}`;
+                            navigator.clipboard.writeText(url);
+                            alert('Public link copied to clipboard!');
+                          }}
+                          className="text-zinc-300 hover:text-indigo-600 transition-colors"
+                          title="Copy Public Link"
+                        >
+                          <LinkIcon className="w-4 h-4" />
+                        </button>
+                      </>
+                    )}
+                    <button 
+                      onClick={() => handleEditSurvey(survey)}
+                      className="text-zinc-300 hover:text-indigo-600 transition-colors"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button 
+                      onClick={() => handleDeleteSurvey(survey.id)}
+                      className="text-zinc-300 hover:text-red-500 transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                <p className="text-zinc-500 text-sm mb-6 line-clamp-2">{survey.description}</p>
+                <button 
+                  onClick={() => setSelectedSurvey(survey)}
+                  className="w-full bg-zinc-100 text-zinc-900 font-bold py-3 rounded-xl hover:bg-indigo-600 hover:text-white transition-all"
+                >
+                  Manage Survey
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="bg-white rounded-3xl border border-zinc-200 overflow-hidden shadow-sm">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-zinc-50 border-bottom border-zinc-200">
+                    <th className="px-6 py-4 text-sm font-bold text-zinc-700">User</th>
+                    <th className="px-6 py-4 text-sm font-bold text-zinc-700">Email</th>
+                    <th className="px-6 py-4 text-sm font-bold text-zinc-700">Role</th>
+                    <th className="px-6 py-4 text-sm font-bold text-zinc-700">Joined</th>
+                    <th className="px-6 py-4 text-sm font-bold text-zinc-700 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {allUsers.map((u) => (
+                    <tr key={u.id} className="hover:bg-zinc-50 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-xs">
+                            {u.username?.[0]?.toUpperCase() || 'U'}
+                          </div>
+                          <span className="font-bold text-zinc-900">{u.username}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-zinc-500">{u.email}</td>
+                      <td className="px-6 py-4">
+                        <span className={cn(
+                          "px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider",
+                          u.role === 'admin' ? "bg-indigo-50 text-indigo-600" : "bg-zinc-50 text-zinc-600"
+                        )}>
+                          {u.role}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-zinc-500">
+                        {u.createdAt?.toDate ? u.createdAt.toDate().toLocaleDateString() : 'N/A'}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        {u.email !== "rannamaari@gmail.com" && (
+                          <button 
+                            onClick={() => handleToggleUserRole(u.id, u.role)}
+                            className={cn(
+                              "text-xs font-bold px-3 py-1.5 rounded-lg transition-all",
+                              u.role === 'admin' 
+                                ? "text-red-600 hover:bg-red-50" 
+                                : "text-indigo-600 hover:bg-indigo-50"
+                            )}
+                          >
+                            {u.role === 'admin' ? 'Demote to Respondent' : 'Promote to Admin'}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {showCreateModal && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
