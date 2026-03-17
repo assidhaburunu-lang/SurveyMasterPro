@@ -1,0 +1,86 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Application user profile",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "respondent"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "role"]
+    },
+    "Survey": {
+      "title": "Survey",
+      "description": "A survey containing multiple questions",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "is_public": { "type": "boolean" },
+        "language": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "createdBy", "createdAt"]
+    },
+    "Question": {
+      "title": "Question",
+      "description": "A question within a survey",
+      "type": "object",
+      "properties": {
+        "surveyId": { "type": "string" },
+        "text": { "type": "string" },
+        "type": { "type": "string", "enum": ["mcq", "text", "date", "number", "time"] },
+        "order": { "type": "integer" }
+      },
+      "required": ["surveyId", "text", "type", "order"]
+    },
+    "Option": {
+      "title": "Option",
+      "description": "An option for a multiple choice question",
+      "type": "object",
+      "properties": {
+        "questionId": { "type": "string" },
+        "text": { "type": "string" },
+        "nextQuestionOrder": { "type": "integer" }
+      },
+      "required": ["questionId", "text"]
+    },
+    "Response": {
+      "title": "Response",
+      "description": "A user's answer to a question",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "submissionId": { "type": "string" },
+        "surveyId": { "type": "string" },
+        "questionId": { "type": "string" },
+        "answer": { "type": "string" },
+        "submittedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["submissionId", "surveyId", "questionId", "answer", "submittedAt"]
+    },
+    "Assignment": {
+      "title": "Assignment",
+      "description": "Mapping of a survey to a respondent",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "surveyId": { "type": "string" },
+        "assignedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "surveyId", "assignedAt"]
+    }
+  },
+  "firestore": {
+    "users": { "schema": "User", "description": "User profiles" },
+    "surveys": { "schema": "Survey", "description": "Survey definitions" },
+    "questions": { "schema": "Question", "description": "Questions for surveys" },
+    "options": { "schema": "Option", "description": "Options for MCQ questions" },
+    "responses": { "schema": "Response", "description": "User survey responses" },
+    "assignments": { "schema": "Assignment", "description": "Survey assignments to users" }
+  }
+}

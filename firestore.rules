@@ -1,0 +1,141 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields:
+    //   - email: string (required)
+    //   - role: string (required, ['admin', 'respondent'])
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: surveys
+    // Fields:
+    //   - title: string (required)
+    //   - description: string
+    //   - is_public: bool
+    //   - language: string
+    //   - createdBy: string (uid)
+    //   - createdAt: timestamp
+    //
+    // Collection: questions
+    // Fields:
+    //   - surveyId: string
+    //   - text: string
+    //   - type: string (['mcq', 'text', 'date', 'number', 'time'])
+    //   - order: int
+    //
+    // Collection: options
+    // Fields:
+    //   - questionId: string
+    //   - text: string
+    //   - nextQuestionOrder: int
+    //
+    // Collection: responses
+    // Fields:
+    //   - userId: string
+    //   - submissionId: string
+    //   - surveyId: string
+    //   - questionId: string
+    //   - answer: string
+    //   - submittedAt: timestamp
+    //
+    // Collection: assignments
+    // Fields:
+    //   - userId: string
+    //   - surveyId: string
+    //   - assignedAt: timestamp
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (
+          (request.auth.token.email == "rannamaari@gmail.com" && request.auth.token.email_verified == true) ||
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+        );
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['email', 'role', 'createdAt', 'username', 'uid']) &&
+             data.email is string &&
+             data.role in ['admin', 'respondent'];
+    }
+
+    function isValidSurvey(data) {
+      return hasOnlyAllowedFields(['title', 'description', 'is_public', 'language', 'createdBy', 'createdAt']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200;
+    }
+
+    function isValidResponse(data) {
+      return hasOnlyAllowedFields(['userId', 'submissionId', 'surveyId', 'questionId', 'answer', 'submittedAt']) &&
+             data.answer is string && data.answer.size() < 5000;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && 
+                    ((isOwner(userId) && request.resource.data.role == 'respondent') || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
+                    ((isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin());
+    }
+
+    match /surveys/{surveyId} {
+      allow read: if isAuthenticated() || resource.data.is_public == true;
+      allow write: if isAdmin();
+    }
+
+    match /questions/{questionId} {
+      allow read: if isAuthenticated() || get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_public == true;
+      allow write: if isAdmin();
+    }
+
+    match /options/{optionId} {
+      allow read: if isAuthenticated() || get(/databases/$(database)/documents/questions/$(resource.data.questionId)).data.surveyId != null; // Simplified check
+      allow write: if isAdmin();
+    }
+
+    match /responses/{responseId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if (isAuthenticated() && request.resource.data.userId == request.auth.uid) || 
+                    (get(/databases/$(database)/documents/surveys/$(request.resource.data.surveyId)).data.is_public == true);
+      allow update, delete: if isAdmin();
+    }
+
+    match /assignments/{assignmentId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow write: if isAdmin();
+    }
+  }
+}

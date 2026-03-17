@@ -64,6 +64,7 @@ import {
   HeadingLevel 
 } from 'docx';
 import { saveAs } from 'file-saver';
+import * as XLSX from 'xlsx';
 import { GoogleGenAI } from "@google/genai";
 import { QRCodeSVG } from 'qrcode.react';
 import { clsx, type ClassValue } from 'clsx';
@@ -74,54 +75,108 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  onAuthStateChanged, 
+  signInWithPopup, 
+  signOut, 
+  GoogleAuthProvider,
+  User as FirebaseUser
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  getDoc, 
+  getDocs, 
+  setDoc, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  query, 
+  where, 
+  orderBy, 
+  onSnapshot,
+  serverTimestamp,
+  Timestamp,
+  writeBatch
+} from 'firebase/firestore';
+import { auth, db, googleProvider } from './firebase';
+
 // --- Auth Context ---
 interface User {
-  id: number;
+  uid: string;
+  email: string | null;
   username: string;
   role: 'admin' | 'respondent';
 }
 
 interface AuthContextType {
   user: User | null;
-  token: string | null;
-  login: (token: string, user: User) => void;
-  logout: () => void;
   loading: boolean;
+  loginWithGoogle: () => Promise<void>;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
 const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const savedToken = localStorage.getItem('token');
-    const savedUser = localStorage.getItem('user');
-    if (savedToken && savedUser) {
-      setToken(savedToken);
-      setUser(JSON.parse(savedUser));
-    }
-    setLoading(false);
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // Check if user document exists in Firestore
+        const userRef = doc(db, 'users', firebaseUser.uid);
+        const userSnap = await getDoc(userRef);
+        
+        if (userSnap.exists()) {
+          setUser(userSnap.data() as User);
+        } else {
+          // Create new user document
+          const isDefaultAdmin = firebaseUser.email === "rannamaari@gmail.com";
+          const newUser: User = {
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            username: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+            role: isDefaultAdmin ? 'admin' : 'respondent'
+          };
+          await setDoc(userRef, {
+            ...newUser,
+            createdAt: serverTimestamp()
+          });
+          setUser(newUser);
+        }
+      } else {
+        setUser(null);
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
-  const login = (newToken: string, newUser: User) => {
-    setToken(newToken);
-    setUser(newUser);
-    localStorage.setItem('token', newToken);
-    localStorage.setItem('user', JSON.stringify(newUser));
+  const loginWithGoogle = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error("Login failed:", error);
+      throw error;
+    }
   };
 
-  const logout = () => {
-    setToken(null);
-    setUser(null);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+  const logout = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error("Logout failed:", error);
+    }
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, loading, loginWithGoogle, logout }}>
       {children}
     </AuthContext.Provider>
   );
@@ -144,7 +199,7 @@ const Navbar = () => {
   return (
     <nav className="bg-white border-b border-zinc-200 px-6 py-4 flex justify-between items-center sticky top-0 z-50">
       <div className="flex items-center gap-2">
-        <div className="bg-indigo-600 p-2 rounded-lg">
+        <div className="bg-indigo-600 p-2 rounded-lg cursor-pointer" onClick={() => navigate('/')}>
           <ClipboardList className="text-white w-5 h-5" />
         </div>
         <span className="font-bold text-xl tracking-tight text-zinc-900">SurveyMaster Pro</span>
@@ -155,7 +210,7 @@ const Navbar = () => {
           <span className="text-sm font-medium">{user.username} ({user.role})</span>
         </div>
         <button 
-          onClick={() => { logout(); navigate('/login'); }}
+          onClick={async () => { await logout(); navigate('/login'); }}
           className="flex items-center gap-2 text-sm font-semibold text-zinc-500 hover:text-red-600 transition-colors"
         >
           <LogOut className="w-4 h-4" />
@@ -167,29 +222,26 @@ const Navbar = () => {
 };
 
 const LoginPage = () => {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const { login } = useAuth();
+  const [loggingIn, setLoggingIn] = useState(false);
+  const { loginWithGoogle, user } = useAuth();
   const navigate = useNavigate();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  useEffect(() => {
+    if (user) {
+      navigate(user.role === 'admin' ? '/admin' : '/survey');
+    }
+  }, [user, navigate]);
+
+  const handleGoogleLogin = async () => {
+    setLoggingIn(true);
+    setError('');
     try {
-      const res = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        login(data.token, data.user);
-        navigate(data.user.role === 'admin' ? '/admin' : '/survey');
-      } else {
-        setError(data.error);
-      }
-    } catch (e) {
-      setError('Connection failed');
+      await loginWithGoogle();
+    } catch (e: any) {
+      setError(e.message || 'Login failed');
+    } finally {
+      setLoggingIn(false);
     }
   };
 
@@ -208,37 +260,38 @@ const LoginPage = () => {
           <p className="text-zinc-500 mt-2">Sign in to manage your surveys</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div>
-            <label className="block text-sm font-semibold text-zinc-700 mb-2">Username</label>
-            <input 
-              type="text" 
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
-              placeholder="Enter your username"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-zinc-700 mb-2">Password</label>
-            <input 
-              type="password" 
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
-              placeholder="••••••••"
-              required
-            />
-          </div>
-          {error && <p className="text-red-500 text-sm font-medium">{error}</p>}
-          <button 
-            type="submit"
-            className="w-full bg-indigo-600 text-white font-bold py-4 rounded-xl hover:bg-indigo-700 active:scale-[0.98] transition-all shadow-lg shadow-indigo-200"
+        <div className="space-y-4">
+          <button
+            onClick={handleGoogleLogin}
+            disabled={loggingIn}
+            className="w-full flex items-center justify-center gap-3 bg-white border border-zinc-200 text-zinc-700 font-bold py-4 px-6 rounded-2xl hover:bg-zinc-50 active:scale-[0.98] transition-all shadow-sm"
           >
-            Sign In
+            {loggingIn ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <svg className="w-5 h-5" viewBox="0 0 24 24">
+                <path
+                  fill="#4285F4"
+                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                />
+              </svg>
+            )}
+            Sign in with Google
           </button>
-        </form>
+          {error && <p className="text-red-500 text-sm font-medium text-center">{error}</p>}
+        </div>
 
         <p className="text-center mt-8 text-zinc-500 text-sm">
           Don't have an account? <Link to="/register" className="text-indigo-600 font-bold hover:underline">Register here</Link>
@@ -248,82 +301,6 @@ const LoginPage = () => {
   );
 };
 
-const RegisterPage = () => {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const navigate = useNavigate();
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const res = await fetch('/api/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-      });
-      if (res.ok) {
-        navigate('/login');
-      } else {
-        const data = await res.json();
-        setError(data.error);
-      }
-    } catch (e) {
-      setError('Connection failed');
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-zinc-50 flex items-center justify-center p-6">
-      <motion.div 
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="max-w-md w-full bg-white rounded-3xl shadow-xl shadow-zinc-200/50 p-10 border border-zinc-100"
-      >
-        <div className="text-center mb-10">
-          <h1 className="text-3xl font-bold text-zinc-900">Create Account</h1>
-          <p className="text-zinc-500 mt-2">Join SurveyMaster Pro today</p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div>
-            <label className="block text-sm font-semibold text-zinc-700 mb-2">Username</label>
-            <input 
-              type="text" 
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
-              placeholder="Choose a username"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-zinc-700 mb-2">Password</label>
-            <input 
-              type="password" 
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
-              placeholder="••••••••"
-              required
-            />
-          </div>
-          {error && <p className="text-red-500 text-sm font-medium">{error}</p>}
-          <button 
-            type="submit"
-            className="w-full bg-indigo-600 text-white font-bold py-4 rounded-xl hover:bg-indigo-700 active:scale-[0.98] transition-all shadow-lg shadow-indigo-200"
-          >
-            Register
-          </button>
-        </form>
-
-        <p className="text-center mt-8 text-zinc-500 text-sm">
-          Already have an account? <Link to="/login" className="text-indigo-600 font-bold hover:underline">Sign in</Link>
-        </p>
-      </motion.div>
-    </div>
-  );
-};
 
 const AdminDashboard = () => {
   const { token } = useAuth();
@@ -344,136 +321,274 @@ const AdminDashboard = () => {
   const [assignedUserIds, setAssignedUserIds] = useState<number[]>([]);
   const [activeTab, setActiveTab] = useState<'stats' | 'preview' | 'assignments'>('stats');
   const [vizPreferences, setVizPreferences] = useState<Record<number, string>>({});
+  const [showAddQuestionModal, setShowAddQuestionModal] = useState(false);
+  const [newQuestion, setNewQuestion] = useState({ text: '', type: 'text', options: [''] });
   const [generatingReport, setGeneratingReport] = useState(false);
   const [confirmModal, setConfirmModal] = useState<{ show: boolean, title: string, message: string, onConfirm: () => void } | null>(null);
 
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
 
+  const fetchSurveys = () => {
+    const q = query(collection(db, 'surveys'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setSurveys(data);
+    });
+    return unsubscribe;
+  };
+
+  const fetchQuestions = () => {
+    if (!selectedSurvey) return;
+    const q = query(collection(db, 'questions'), where('surveyId', '==', selectedSurvey.id), orderBy('order', 'asc'));
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      const questionsData = await Promise.all(snapshot.docs.map(async (qDoc) => {
+        const qData = qDoc.data();
+        // Fetch options for this question
+        const optQ = query(collection(db, 'options'), where('questionId', '==', qDoc.id));
+        const optSnap = await getDocs(optQ);
+        const options = optSnap.docs.map(oDoc => ({ id: oDoc.id, ...oDoc.data() }));
+        return { id: qDoc.id, ...qData, options };
+      }));
+      setQuestions(questionsData);
+    });
+    return unsubscribe;
+  };
+
+  const fetchRespondents = () => {
+    const q = query(collection(db, 'users'), where('role', '==', 'respondent'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setRespondents(data);
+    });
+    return unsubscribe;
+  };
+
+  const fetchAssignments = () => {
+    if (!selectedSurvey) return;
+    const q = query(collection(db, 'assignments'), where('surveyId', '==', selectedSurvey.id));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => doc.data().userId);
+      setAssignedUserIds(data);
+    });
+    return unsubscribe;
+  };
+
+  const fetchStats = () => {
+    if (!selectedSurvey) return;
+    const q = query(collection(db, 'responses'), where('surveyId', '==', selectedSurvey.id));
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      const rawResponses = snapshot.docs.map(doc => doc.data());
+      
+      // Group responses by questionId and answer to match the previous stats format
+      const grouped: Record<string, any> = {};
+      
+      for (const resp of rawResponses) {
+        const key = `${resp.questionId}_${resp.answer}`;
+        if (!grouped[key]) {
+          // Find question text
+          const qDoc = await getDoc(doc(db, 'questions', resp.questionId));
+          const qData = qDoc.data();
+          grouped[key] = {
+            question_id: resp.questionId,
+            text: qData?.text || 'Unknown Question',
+            type: qData?.type || 'text',
+            answer: resp.answer,
+            count: 0
+          };
+        }
+        grouped[key].count++;
+      }
+      
+      setStats(Object.values(grouped));
+    });
+    return unsubscribe;
+  };
+
   useEffect(() => {
-    fetchSurveys();
+    const unsubscribe = fetchSurveys();
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
     if (selectedSurvey) {
-      fetchStats();
-      fetchQuestions();
-      fetchRespondents();
-      fetchAssignments();
+      const unsubQuestions = fetchQuestions();
+      const unsubRespondents = fetchRespondents();
+      const unsubAssignments = fetchAssignments();
+      const unsubStats = fetchStats();
+      return () => {
+        unsubQuestions?.();
+        unsubRespondents?.();
+        unsubAssignments?.();
+        unsubStats?.();
+      };
     }
   }, [selectedSurvey]);
-
-  const [showAddQuestionModal, setShowAddQuestionModal] = useState(false);
-  const [newQuestion, setNewQuestion] = useState<{text: string, type: string, options: string[]}>({ text: '', type: 'mcq', options: [''] });
 
   const handleAddQuestion = async () => {
     if (!selectedSurvey) return;
     try {
-      const res = await fetch(`/api/admin/surveys/${selectedSurvey.id}/questions`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(newQuestion),
+      const qRef = await addDoc(collection(db, 'questions'), {
+        surveyId: selectedSurvey.id,
+        text: newQuestion.text,
+        type: newQuestion.type,
+        order: questions.length + 1
       });
-      if (res.ok) {
-        fetchQuestions();
-        setShowAddQuestionModal(false);
-        setNewQuestion({ text: '', type: 'mcq', options: [''] });
+
+      if (newQuestion.type === 'mcq') {
+        const batch = writeBatch(db);
+        newQuestion.options.forEach(optText => {
+          if (optText.trim()) {
+            const optRef = doc(collection(db, 'options'));
+            batch.set(optRef, {
+              questionId: qRef.id,
+              text: optText.trim(),
+              nextQuestionOrder: null
+            });
+          }
+        });
+        await batch.commit();
       }
+      
+      setShowAddQuestionModal(false);
+      setNewQuestion({ text: '', type: 'mcq', options: [''] });
     } catch (e) {
       console.error('Failed to add question:', e);
     }
   };
 
-  const fetchRespondents = async () => {
-    const res = await fetch('/api/admin/respondents', {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setRespondents(data);
-    }
-  };
-
-  const fetchAssignments = async () => {
+  const handleToggleAssignment = async (userId: string, isAssigned: boolean) => {
     if (!selectedSurvey) return;
-    const res = await fetch(`/api/admin/surveys/${selectedSurvey.id}/assignments`, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setAssignedUserIds(data);
-    }
-  };
-
-  const calculateNumberStats = (data: { answer: string, count: number }[]) => {
-    const values: number[] = [];
-    data.forEach(d => {
-      const val = parseFloat(d.answer);
-      if (!isNaN(val)) {
-        for (let i = 0; i < d.count; i++) {
-          values.push(val);
-        }
-      }
-    });
-
-    if (values.length === 0) return null;
-
-    const sum = values.reduce((a, b) => a + b, 0);
-    const mean = sum / values.length;
-
-    const sorted = [...values].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    const median = sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-
-    const counts: Record<number, number> = {};
-    let maxCount = 0;
-    let modes: number[] = [];
-    values.forEach(v => {
-      counts[v] = (counts[v] || 0) + 1;
-      if (counts[v] > maxCount) {
-        maxCount = counts[v];
-        modes = [v];
-      } else if (counts[v] === maxCount) {
-        modes.push(v);
-      }
-    });
-
-    return { 
-      mean: mean.toFixed(2), 
-      median: median.toFixed(2), 
-      mode: modes.join(', ') 
-    };
-  };
-
-  const handleToggleAssignment = async (userId: number, isAssigned: boolean) => {
-    if (!selectedSurvey) return;
-    const endpoint = isAssigned ? 'unassign' : 'assign';
     try {
-      const res = await fetch(`/api/admin/surveys/${selectedSurvey.id}/${endpoint}`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ userId }),
-      });
-      if (res.ok) {
-        fetchAssignments();
+      if (isAssigned) {
+        // Unassign: find the assignment doc and delete it
+        const q = query(collection(db, 'assignments'), 
+          where('surveyId', '==', selectedSurvey.id), 
+          where('userId', '==', userId)
+        );
+        const snap = await getDocs(q);
+        const batch = writeBatch(db);
+        snap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      } else {
+        // Assign
+        await addDoc(collection(db, 'assignments'), {
+          surveyId: selectedSurvey.id,
+          userId: userId,
+          assignedAt: serverTimestamp()
+        });
       }
     } catch (e) {
       console.error('Failed to toggle assignment:', e);
     }
   };
 
-  const fetchSurveys = async () => {
-    const res = await fetch('/api/admin/surveys', {
-      headers: { 'Authorization': `Bearer ${token}` }
+  const calculateNumberStats = (qStats: any[]) => {
+    if (qStats.length === 0) return null;
+    const values = qStats.flatMap(s => Array(s.count).fill(parseFloat(s.answer))).filter(v => !isNaN(v));
+    if (values.length === 0) return null;
+    
+    values.sort((a, b) => a - b);
+    const sum = values.reduce((a, b) => a + b, 0);
+    const mean = (sum / values.length).toFixed(2);
+    const median = values[Math.floor(values.length / 2)];
+    
+    const counts: Record<number, number> = {};
+    let maxCount = 0;
+    let mode = values[0];
+    values.forEach(v => {
+      counts[v] = (counts[v] || 0) + 1;
+      if (counts[v] > maxCount) {
+        maxCount = counts[v];
+        mode = v;
+      }
     });
-    if (res.ok) {
-      const data = await res.json();
-      setSurveys(data);
+    
+    return { mean, median, mode };
+  };
+
+  const handleCreateSurvey = async () => {
+    if (!auth.currentUser) return;
+    try {
+      await addDoc(collection(db, 'surveys'), {
+        ...newSurvey,
+        createdBy: auth.currentUser.uid,
+        createdAt: serverTimestamp(),
+        isActive: true
+      });
+      setShowCreateModal(false);
+      setNewSurvey({ title: '', description: '', is_public: false, language: 'en' });
+    } catch (e) {
+      console.error('Failed to create survey:', e);
+    }
+  };
+
+  const handleDeleteSurvey = async (id: string) => {
+    setConfirmModal({
+      show: true,
+      title: isRTL ? 'ސާވޭ ފޮހެލުން' : 'Delete Survey',
+      message: isRTL ? 'މި ސާވޭ ފޮހެލަން ބޭނުންތަ؟' : 'Are you sure you want to delete this survey and all its data?',
+      onConfirm: async () => {
+        try {
+          const batch = writeBatch(db);
+          
+          // Delete questions and options
+          const qQ = query(collection(db, 'questions'), where('surveyId', '==', id));
+          const qSnap = await getDocs(qQ);
+          for (const qDoc of qSnap.docs) {
+            const optQ = query(collection(db, 'options'), where('questionId', '==', qDoc.id));
+            const optSnap = await getDocs(optQ);
+            optSnap.docs.forEach(oDoc => batch.delete(oDoc.ref));
+            batch.delete(qDoc.ref);
+          }
+          
+          // Delete assignments
+          const assignQ = query(collection(db, 'assignments'), where('surveyId', '==', id));
+          const assignSnap = await getDocs(assignQ);
+          assignSnap.docs.forEach(aDoc => batch.delete(aDoc.ref));
+          
+          // Delete responses
+          const respQ = query(collection(db, 'responses'), where('surveyId', '==', id));
+          const respSnap = await getDocs(respQ);
+          respSnap.docs.forEach(rDoc => batch.delete(rDoc.ref));
+          
+          // Delete survey
+          batch.delete(doc(db, 'surveys', id));
+          
+          await batch.commit();
+          if (selectedSurvey?.id === id) setSelectedSurvey(null);
+          setConfirmModal(null);
+        } catch (e) {
+          console.error('Failed to delete survey:', e);
+        }
+      }
+    });
+  };
+
+  const handleEditSurvey = (survey: any) => {
+    setEditingSurvey(survey);
+    setNewSurvey({ 
+      title: survey.title, 
+      description: survey.description, 
+      is_public: survey.is_public,
+      language: survey.language || 'en'
+    });
+    setShowCreateModal(true);
+  };
+
+  const handleUpdateSurvey = async () => {
+    if (!editingSurvey) return;
+    try {
+      await updateDoc(doc(db, 'surveys', editingSurvey.id), {
+        title: newSurvey.title,
+        description: newSurvey.description,
+        is_public: newSurvey.is_public,
+        language: newSurvey.language
+      });
+      setEditingSurvey(null);
+      setShowCreateModal(false);
+      setNewSurvey({ title: '', description: '', is_public: false, language: 'en' });
+    } catch (e) {
+      console.error('Failed to update survey:', e);
     }
   };
 
@@ -596,110 +711,58 @@ const AdminDashboard = () => {
     }
   };
 
-  const handleCreateSurvey = async () => {
-    const method = editingSurvey ? 'PUT' : 'POST';
-    const url = editingSurvey ? `/api/admin/surveys/${editingSurvey.id}` : '/api/admin/surveys';
-    
-    const res = await fetch(url, {
-      method,
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify(newSurvey),
-    });
-    if (res.ok) {
-      fetchSurveys();
-      setShowCreateModal(false);
-      setEditingSurvey(null);
-      setNewSurvey({ title: '', description: '', is_public: false, language: 'en' });
-    }
-  };
-
-  const handleEditSurvey = (survey: any) => {
-    setEditingSurvey(survey);
-    setNewSurvey({ 
-      title: survey.title, 
-      description: survey.description, 
-      is_public: survey.is_public === 1,
-      language: survey.language || 'en'
-    });
-    setShowCreateModal(true);
-  };
-
-  const handleDeleteSurvey = async (id: number) => {
-    setConfirmModal({
-      show: true,
-      title: isRTL ? 'ސާވޭ ފޮހެލުން' : 'Delete Survey',
-      message: isRTL ? 'މި ސާވޭއާއި މީގެ ހުރިހާ ޑޭޓާއެއް ފޮހެލަން ބޭނުންތަ؟' : 'Delete this survey and all its data?',
-      onConfirm: async () => {
-        const res = await fetch(`/api/admin/surveys/${id}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (res.ok) {
-          fetchSurveys();
-          setConfirmModal(null);
-        }
-      }
-    });
-  };
 
   const handleDownloadResults = async () => {
     if (!selectedSurvey) return;
     try {
-      const res = await fetch(`/api/admin/surveys/${selectedSurvey.id}/export`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+      const q = query(collection(db, 'responses'), where('surveyId', '==', selectedSurvey.id));
+      const snap = await getDocs(q);
+      const responsesData = snap.docs.map(doc => doc.data());
+
+      const questionsRef = query(collection(db, 'questions'), where('surveyId', '==', selectedSurvey.id), orderBy('order', 'asc'));
+      const questionsSnap = await getDocs(questionsRef);
+      const questionsData = questionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      // Group by submissionId
+      const submissions: Record<string, any> = {};
+      responsesData.forEach((r: any) => {
+        if (!submissions[r.submissionId]) {
+          submissions[r.submissionId] = {
+            'Submission ID': r.submissionId,
+            'Submitted At': r.submittedAt?.toDate?.()?.toLocaleString() || r.submittedAt,
+            'User ID': r.userId || 'Anonymous'
+          };
+        }
+        const question = questionsData.find((q: any) => q.id === r.questionId) as any;
+        if (question) {
+          submissions[r.submissionId][question.text] = r.answer;
+        }
       });
-      if (res.ok) {
-        const blob = await res.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `survey_results_${selectedSurvey.id}.xlsx`;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-      } else {
-        alert('Failed to download results');
-      }
+
+      const data = Object.values(submissions);
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(data);
+      XLSX.utils.book_append_sheet(wb, ws, 'Results');
+
+      const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      saveAs(new Blob([wbout], { type: 'application/octet-stream' }), `survey_results_${selectedSurvey.id}.xlsx`);
     } catch (e) {
       console.error(e);
       alert('An error occurred while downloading results');
     }
   };
 
-  const fetchQuestions = async () => {
-    if (!selectedSurvey) return;
-    const res = await fetch(`/api/surveys/${selectedSurvey.id}/questions`, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setQuestions(data);
-    }
-  };
-
-  const handleUpdateJump = async (optionId: number, nextOrder: number | null) => {
+  const handleUpdateJump = async (optionId: string, nextOrder: number | null) => {
     try {
-      const res = await fetch(`/api/admin/options/${optionId}/jump`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ next_question_order: nextOrder }),
+      await updateDoc(doc(db, 'options', optionId), {
+        nextQuestionOrder: nextOrder
       });
-      if (res.ok) {
-        fetchQuestions();
-      }
     } catch (e) {
       console.error('Failed to update jump:', e);
     }
   };
 
-  const handleDeleteQuestion = async (id: number) => {
+  const handleDeleteQuestion = async (id: string) => {
     setConfirmModal({
       show: true,
       title: isRTL ? 'ސުވާލު ފޮހެލުން' : 'Delete Question',
@@ -707,15 +770,16 @@ const AdminDashboard = () => {
       onConfirm: async () => {
         if (!selectedSurvey) return;
         try {
-          const res = await fetch(`/api/admin/surveys/${selectedSurvey.id}/questions/${id}`, {
-            method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-          if (res.ok) {
-            fetchQuestions();
-            fetchStats();
-            setConfirmModal(null);
-          }
+          const batch = writeBatch(db);
+          // Delete options first
+          const optQ = query(collection(db, 'options'), where('questionId', '==', id));
+          const optSnap = await getDocs(optQ);
+          optSnap.docs.forEach(oDoc => batch.delete(oDoc.ref));
+          // Delete question
+          batch.delete(doc(db, 'questions', id));
+          
+          await batch.commit();
+          setConfirmModal(null);
         } catch (e) {
           console.error('Failed to delete question:', e);
         }
@@ -731,15 +795,19 @@ const AdminDashboard = () => {
       onConfirm: async () => {
         if (!selectedSurvey) return;
         try {
-          const res = await fetch(`/api/admin/surveys/${selectedSurvey.id}/questions`, {
-            method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-          if (res.ok) {
-            fetchQuestions();
-            fetchStats();
-            setConfirmModal(null);
+          const q = query(collection(db, 'questions'), where('surveyId', '==', selectedSurvey.id));
+          const snap = await getDocs(q);
+          const batch = writeBatch(db);
+          
+          for (const qDoc of snap.docs) {
+            const optQ = query(collection(db, 'options'), where('questionId', '==', qDoc.id));
+            const optSnap = await getDocs(optQ);
+            optSnap.docs.forEach(oDoc => batch.delete(oDoc.ref));
+            batch.delete(qDoc.ref);
           }
+          
+          await batch.commit();
+          setConfirmModal(null);
         } catch (e) {
           console.error('Failed to clear questions:', e);
         }
@@ -747,80 +815,157 @@ const AdminDashboard = () => {
     });
   };
 
-  const handleReorderQuestion = async (id: number, direction: 'up' | 'down') => {
+  const handleReorderQuestion = async (id: string, direction: 'up' | 'down') => {
     if (!selectedSurvey) return;
     try {
-      const res = await fetch(`/api/admin/surveys/${selectedSurvey.id}/questions/${id}/reorder`, {
-        method: 'POST',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ direction })
-      });
-      if (res.ok) {
-        fetchQuestions();
-      }
+      const currentIdx = questions.findIndex(q => q.id === id);
+      if (currentIdx === -1) return;
+      
+      const targetIdx = direction === 'up' ? currentIdx - 1 : currentIdx + 1;
+      if (targetIdx < 0 || targetIdx >= questions.length) return;
+      
+      const currentQ = questions[currentIdx];
+      const targetQ = questions[targetIdx];
+      
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'questions', currentQ.id), { order: targetQ.order });
+      batch.update(doc(db, 'questions', targetQ.id), { order: currentQ.order });
+      
+      await batch.commit();
     } catch (e) {
       console.error('Failed to reorder question:', e);
     }
   };
 
-  const handleUpdateQuestionType = async (id: number, type: string) => {
-    if (!selectedSurvey) return;
+  const handleUpdateQuestionType = async (id: string, newType: string) => {
     try {
-      const res = await fetch(`/api/admin/surveys/${selectedSurvey.id}/questions/${id}`, {
-        method: 'PATCH',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ type })
-      });
-      if (res.ok) {
-        fetchQuestions();
-        fetchStats();
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'questions', id), { type: newType });
+      
+      if (newType !== 'mcq') {
+        // Delete options if not MCQ
+        const optQ = query(collection(db, 'options'), where('questionId', '==', id));
+        const optSnap = await getDocs(optQ);
+        optSnap.docs.forEach(oDoc => batch.delete(oDoc.ref));
+      } else {
+        // If changed to MCQ and no options, add a default
+        const optQ = query(collection(db, 'options'), where('questionId', '==', id));
+        const optSnap = await getDocs(optQ);
+        if (optSnap.empty) {
+          const optRef = doc(collection(db, 'options'));
+          batch.set(optRef, {
+            questionId: id,
+            text: 'Option 1',
+            nextQuestionOrder: null
+          });
+        }
       }
+      
+      await batch.commit();
     } catch (e) {
       console.error('Failed to update question type:', e);
     }
   };
 
-  const fetchStats = async () => {
-    if (!selectedSurvey) return;
-    const res = await fetch(`/api/admin/surveys/${selectedSurvey.id}/stats`, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setStats(data);
-    }
-  };
 
   const handleUpload = async () => {
     if (!file || !selectedSurvey) return;
     setUploading(true);
-    const formData = new FormData();
-    formData.append('file', file);
-
+    
     try {
-      const res = await fetch(`/api/admin/surveys/${selectedSurvey.id}/upload`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData,
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setMessage(`Success! Uploaded ${data.count} questions.`);
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const data = e.target?.result;
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const rawData: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+        
+        if (rawData.length < 2) {
+          setMessage('Excel file must have a header row and at least one data row');
+          setUploading(false);
+          return;
+        }
+
+        const headers = rawData[0].map(h => String(h).toLowerCase().trim());
+        const dataRows = rawData.slice(1);
+
+        const textIdx = headers.indexOf('text');
+        const typeIdx = headers.indexOf('type');
+        const optionsIdx = headers.indexOf('options');
+
+        if (textIdx === -1 || typeIdx === -1) {
+          setMessage('Excel file must contain "text" and "type" columns');
+          setUploading(false);
+          return;
+        }
+
+        const validTypes = ['mcq', 'text', 'date', 'time', 'number'];
+        const processedData = dataRows.map(row => ({
+          text: row[textIdx],
+          type: String(row[typeIdx] || '').toLowerCase().trim(),
+          options: optionsIdx !== -1 ? row[optionsIdx] : null
+        })).filter(row => row.text && validTypes.includes(row.type));
+
+        if (processedData.length === 0) {
+          setMessage('No valid questions found.');
+          setUploading(false);
+          return;
+        }
+
+        // Delete existing questions for this survey
+        const existingQ = query(collection(db, 'questions'), where('surveyId', '==', selectedSurvey.id));
+        const existingSnap = await getDocs(existingQ);
+        const batch = writeBatch(db);
+        
+        // Also need to delete options for these questions
+        for (const qDoc of existingSnap.docs) {
+          const optQ = query(collection(db, 'options'), where('questionId', '==', qDoc.id));
+          const optSnap = await getDocs(optQ);
+          optSnap.docs.forEach(oDoc => batch.delete(oDoc.ref));
+          batch.delete(qDoc.ref);
+        }
+
+        // Add new questions
+        for (let i = 0; i < processedData.length; i++) {
+          const q = processedData[i];
+          const qRef = doc(collection(db, 'questions'));
+          batch.set(qRef, {
+            surveyId: selectedSurvey.id,
+            text: q.text,
+            type: q.type,
+            order: i + 1
+          });
+
+          if (q.type === 'mcq' && q.options) {
+            const opts = q.options.toString().split(/[,،]/).map((o: string) => o.trim()).filter((o: string) => o);
+            opts.forEach((optStr: string) => {
+              let text = optStr;
+              let nextOrder = null;
+              const jumpMatch = optStr.match(/\[Jump:(\d+)\]/);
+              if (jumpMatch) {
+                text = optStr.replace(jumpMatch[0], '').trim();
+                nextOrder = parseInt(jumpMatch[1]);
+              }
+              const optRef = doc(collection(db, 'options'));
+              batch.set(optRef, {
+                questionId: qRef.id,
+                text: text,
+                nextQuestionOrder: nextOrder
+              });
+            });
+          }
+        }
+
+        await batch.commit();
+        setMessage(`Success! Uploaded ${processedData.length} questions.`);
         setFile(null);
-        fetchStats();
-        fetchQuestions();
-      } else {
-        setMessage(data.error);
-      }
+        setUploading(false);
+      };
+      reader.readAsArrayBuffer(file);
     } catch (e) {
+      console.error(e);
       setMessage('Upload failed');
-    } finally {
       setUploading(false);
     }
   };
@@ -845,7 +990,7 @@ const AdminDashboard = () => {
               <div className="flex justify-between items-start mb-4">
                 <div className="flex items-center gap-2">
                   <h3 className="text-xl font-bold text-zinc-900">{survey.title}</h3>
-                  {survey.is_public === 1 && (
+                  {survey.is_public && (
                     <span className="bg-emerald-50 text-emerald-600 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
                       <Globe className="w-3 h-3" />
                       PUBLIC
@@ -858,7 +1003,7 @@ const AdminDashboard = () => {
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  {survey.is_public === 1 && (
+                  {survey.is_public && (
                     <>
                       <button 
                         onClick={() => setShowQRModal(survey)}
@@ -967,7 +1112,7 @@ const AdminDashboard = () => {
                     Cancel
                   </button>
                   <button 
-                    onClick={handleCreateSurvey}
+                    onClick={editingSurvey ? handleUpdateSurvey : handleCreateSurvey}
                     className="flex-1 px-4 py-3 rounded-xl font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition-all"
                   >
                     {editingSurvey ? 'Save Changes' : 'Create'}
@@ -1684,46 +1829,57 @@ const AdminDashboard = () => {
 };
 
 const RespondentDashboard = () => {
-  const { token } = useAuth();
+  const { user } = useAuth();
   const [surveys, setSurveys] = useState<any[]>([]);
   const [selectedSurvey, setSelectedSurvey] = useState<any | null>(null);
   const [questions, setQuestions] = useState<any[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<number, string>>({});
+  const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [history, setHistory] = useState<number[]>([]);
 
   useEffect(() => {
-    fetchSurveys();
-  }, []);
+    if (user) {
+      fetchSurveys();
+    }
+  }, [user]);
 
   const fetchSurveys = async () => {
+    if (!user) return;
     setLoading(true);
     try {
-      const res = await fetch('/api/surveys', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setSurveys(data);
+      // Get assignments for this user
+      const q = query(collection(db, 'assignments'), where('userId', '==', user.uid));
+      const snap = await getDocs(q);
+      const surveyIds = snap.docs.map(doc => doc.data().surveyId);
+      
+      if (surveyIds.length > 0) {
+        const surveysQ = query(collection(db, 'surveys'), where('__name__', 'in', surveyIds));
+        const surveysSnap = await getDocs(surveysQ);
+        setSurveys(surveysSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      } else {
+        setSurveys([]);
       }
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchQuestions = async (surveyId: number) => {
+  const fetchQuestions = async (surveyId: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/surveys/${surveyId}/questions`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setQuestions(data);
-      }
+      const q = query(collection(db, 'questions'), where('surveyId', '==', surveyId), orderBy('order', 'asc'));
+      const snap = await getDocs(q);
+      const questionsData = await Promise.all(snap.docs.map(async (qDoc) => {
+        const qData = qDoc.data();
+        const optQ = query(collection(db, 'options'), where('questionId', '==', qDoc.id));
+        const optSnap = await getDocs(optQ);
+        const options = optSnap.docs.map(oDoc => ({ id: oDoc.id, ...oDoc.data() }));
+        return { id: qDoc.id, ...qData, options };
+      }));
+      setQuestions(questionsData);
     } finally {
       setLoading(false);
     }
@@ -1744,11 +1900,12 @@ const RespondentDashboard = () => {
 
     let nextIndex = currentIndex + 1;
 
-    // Check for branching logic
     if (currentQuestion.type === 'mcq') {
       const selectedOpt = currentQuestion.options.find((o: any) => o.text === answers[currentQuestion.id]);
-      if (selectedOpt && selectedOpt.next_question_order !== null) {
-        nextIndex = selectedOpt.next_question_order;
+      if (selectedOpt && selectedOpt.nextQuestionOrder !== null) {
+        // Find index of question with that order
+        const targetIdx = questions.findIndex(q => q.order === selectedOpt.nextQuestionOrder);
+        if (targetIdx !== -1) nextIndex = targetIdx;
       }
     }
 
@@ -1771,25 +1928,26 @@ const RespondentDashboard = () => {
 
     setSubmitting(true);
     try {
-      // We only submit the answers that were actually reached in the flow
+      const submissionId = crypto.randomUUID();
       const reachedQuestionIds = [...history, currentIndex].map(idx => questions[idx].id);
-      const payload = reachedQuestionIds.map(id => ({
-        questionId: id,
-        answer: answers[id]
-      }));
-
-      const res = await fetch('/api/submit', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ answers: payload }),
+      const batch = writeBatch(db);
+      
+      reachedQuestionIds.forEach(qId => {
+        const respRef = doc(collection(db, 'responses'));
+        batch.set(respRef, {
+          userId: user?.uid,
+          submissionId,
+          surveyId: selectedSurvey.id,
+          questionId: qId,
+          answer: answers[qId],
+          submittedAt: serverTimestamp()
+        });
       });
 
-      if (res.ok) {
-        setSubmitted(true);
-      }
+      await batch.commit();
+      setSubmitted(true);
+    } catch (e) {
+      console.error('Submission failed:', e);
     } finally {
       setSubmitting(false);
     }
@@ -1857,7 +2015,7 @@ const RespondentDashboard = () => {
 
   const isLastQuestion = currentIndex >= questions.length - 1 || 
     (currentQuestion.type === 'mcq' && 
-     currentQuestion.options.find((o: any) => o.text === answers[currentQuestion.id])?.next_question_order >= questions.length);
+     currentQuestion.options.find((o: any) => o.text === answers[currentQuestion.id])?.nextQuestionOrder >= questions.length);
 
   const isRTL = selectedSurvey?.language === 'dv';
 
@@ -2042,7 +2200,7 @@ const PublicSurvey = () => {
   const [survey, setSurvey] = useState<any | null>(null);
   const [questions, setQuestions] = useState<any[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<number, string>>({});
+  const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -2050,21 +2208,34 @@ const PublicSurvey = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchSurvey();
+    if (id) {
+      fetchSurvey();
+    }
   }, [id]);
 
   const fetchSurvey = async () => {
+    if (!id) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/public/surveys/${id}`);
-      if (!res.ok) throw new Error('Survey not found or not public');
-      const data = await res.json();
-      setSurvey(data);
+      const surveyRef = doc(db, 'surveys', id);
+      const surveySnap = await getDoc(surveyRef);
       
-      const qRes = await fetch(`/api/public/surveys/${id}/questions`);
-      if (!qRes.ok) throw new Error('Failed to load questions');
-      const qData = await qRes.json();
-      setQuestions(qData);
+      if (!surveySnap.exists() || !surveySnap.data().is_public) {
+        throw new Error('Survey not found or not public');
+      }
+      
+      setSurvey({ id: surveySnap.id, ...surveySnap.data() });
+      
+      const q = query(collection(db, 'questions'), where('surveyId', '==', id), orderBy('order', 'asc'));
+      const qSnap = await getDocs(q);
+      const questionsData = await Promise.all(qSnap.docs.map(async (qDoc) => {
+        const qData = qDoc.data();
+        const optQ = query(collection(db, 'options'), where('questionId', '==', qDoc.id));
+        const optSnap = await getDocs(optQ);
+        const options = optSnap.docs.map(oDoc => ({ id: oDoc.id, ...oDoc.data() }));
+        return { id: qDoc.id, ...qData, options };
+      }));
+      setQuestions(questionsData);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -2072,8 +2243,9 @@ const PublicSurvey = () => {
     }
   };
 
+  const currentQuestion = questions[currentIndex];
+
   const handleNext = () => {
-    const currentQuestion = questions[currentIndex];
     if (!answers[currentQuestion.id]) {
       alert('Please answer the question before proceeding.');
       return;
@@ -2082,8 +2254,9 @@ const PublicSurvey = () => {
     let nextIndex = currentIndex + 1;
     if (currentQuestion.type === 'mcq') {
       const selectedOpt = currentQuestion.options.find((o: any) => o.text === answers[currentQuestion.id]);
-      if (selectedOpt && selectedOpt.next_question_order !== null) {
-        nextIndex = selectedOpt.next_question_order;
+      if (selectedOpt && selectedOpt.nextQuestionOrder !== null) {
+        const targetIdx = questions.findIndex(q => q.order === selectedOpt.nextQuestionOrder);
+        if (targetIdx !== -1) nextIndex = targetIdx;
       }
     }
 
@@ -2099,7 +2272,6 @@ const PublicSurvey = () => {
   };
 
   const handleSubmit = async () => {
-    const currentQuestion = questions[currentIndex];
     if (!answers[currentQuestion.id]) {
       alert('Please answer the final question before submitting.');
       return;
@@ -2107,21 +2279,26 @@ const PublicSurvey = () => {
 
     setSubmitting(true);
     try {
+      const submissionId = crypto.randomUUID();
       const reachedQuestionIds = [...history, currentIndex].map(idx => questions[idx].id);
-      const payload: Record<number, string> = {};
-      reachedQuestionIds.forEach(id => {
-        payload[id] = answers[id];
+      const batch = writeBatch(db);
+      
+      reachedQuestionIds.forEach(qId => {
+        const respRef = doc(collection(db, 'responses'));
+        batch.set(respRef, {
+          userId: null, // Public submission
+          submissionId,
+          surveyId: id,
+          questionId: qId,
+          answer: answers[qId],
+          submittedAt: serverTimestamp()
+        });
       });
 
-      const res = await fetch(`/api/public/surveys/${id}/responses`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ answers: payload }),
-      });
-
-      if (res.ok) {
-        setSubmitted(true);
-      }
+      await batch.commit();
+      setSubmitted(true);
+    } catch (e) {
+      console.error('Submission failed:', e);
     } finally {
       setSubmitting(false);
     }
@@ -2165,10 +2342,9 @@ const PublicSurvey = () => {
     );
   }
 
-  const currentQuestion = questions[currentIndex];
   const isLastQuestion = currentIndex >= questions.length - 1 || 
     (currentQuestion.type === 'mcq' && 
-     currentQuestion.options.find((o: any) => o.text === answers[currentQuestion.id])?.next_question_order >= questions.length);
+     currentQuestion.options.find((o: any) => o.text === answers[currentQuestion.id])?.nextQuestionOrder >= questions.length);
 
   const isRTL = survey?.language === 'dv';
 
@@ -2357,7 +2533,6 @@ export default function App() {
           <Navbar />
           <Routes>
             <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
             <Route path="/public/survey/:id" element={<PublicSurvey />} />
             <Route 
               path="/admin" 
