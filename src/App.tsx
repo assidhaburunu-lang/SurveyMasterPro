@@ -282,7 +282,7 @@ const LandingPage = () => {
           <div className="absolute -inset-4 bg-indigo-600/5 rounded-[40px] blur-3xl" />
           <div className="relative bg-white rounded-[40px] border border-zinc-100 shadow-2xl overflow-hidden aspect-video lg:aspect-square">
             <img 
-              src="SMP img.png" 
+              src="SMP logo.png" 
               alt="Survey Master Pro Dashboard" 
               className="w-full h-full object-cover"
               referrerPolicy="no-referrer"
