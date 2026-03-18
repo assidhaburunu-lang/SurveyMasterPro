@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, Link, useNavigate, useParams } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Link, useNavigate, useParams, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Upload, 
@@ -194,6 +194,12 @@ const useAuth = () => {
 const Navbar = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Hide navbar on public survey pages and respondent dashboard
+  if (location.pathname.startsWith('/public/survey/') || location.pathname === '/survey') {
+    return null;
+  }
 
   return (
     <nav className="bg-white border-b border-zinc-200 px-6 py-4 flex justify-between items-center sticky top-0 z-50">
@@ -2083,7 +2089,8 @@ const AdminDashboard = () => {
 };
 
 const RespondentDashboard = () => {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [surveys, setSurveys] = useState<any[]>([]);
   const [selectedSurvey, setSelectedSurvey] = useState<any | null>(null);
   const [questions, setQuestions] = useState<any[]>([]);
@@ -2242,11 +2249,20 @@ const RespondentDashboard = () => {
   if (!selectedSurvey) {
     return (
       <div className="max-w-4xl mx-auto p-8">
-        <div className="flex items-center gap-3 mb-8">
-          <div className="bg-indigo-600 p-2 rounded-lg">
-            <BarChart3 className="text-white w-6 h-6" />
+        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center gap-3">
+            <div className="bg-indigo-600 p-2 rounded-lg">
+              <BarChart3 className="text-white w-6 h-6" />
+            </div>
+            <h1 className="text-3xl font-black text-zinc-900 tracking-tight uppercase">Survey Master Pro</h1>
           </div>
-          <h1 className="text-3xl font-black text-zinc-900 tracking-tight uppercase">Survey Master Pro</h1>
+          <button 
+            onClick={async () => { await logout(); navigate('/login'); }}
+            className="flex items-center gap-2 text-sm font-semibold text-zinc-500 hover:text-red-600 transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            Logout
+          </button>
         </div>
         <h2 className="text-xl font-bold text-zinc-600 mb-6">Available Surveys</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -2281,11 +2297,20 @@ const RespondentDashboard = () => {
 
   return (
     <div className={cn("max-w-3xl mx-auto p-8 pb-24", isRTL && "font-dhivehi")} dir={isRTL ? 'rtl' : 'ltr'}>
-      <div className="flex items-center gap-3 mb-10">
-        <div className="bg-indigo-600 p-1.5 rounded-lg">
-          <BarChart3 className="text-white w-5 h-5" />
+      <div className="flex items-center justify-between mb-10">
+        <div className="flex items-center gap-3">
+          <div className="bg-indigo-600 p-1.5 rounded-lg">
+            <BarChart3 className="text-white w-5 h-5" />
+          </div>
+          <span className="text-sm font-black text-zinc-900 tracking-tight uppercase">Survey Master Pro</span>
         </div>
-        <span className="text-sm font-black text-zinc-900 tracking-tight uppercase">Survey Master Pro</span>
+        <button 
+          onClick={async () => { await logout(); navigate('/login'); }}
+          className="flex items-center gap-2 text-sm font-semibold text-zinc-500 hover:text-red-600 transition-colors"
+        >
+          <LogOut className="w-4 h-4" />
+          Logout
+        </button>
       </div>
       <div className="mb-10 flex items-center justify-between">
         <div className="flex items-center gap-4">
