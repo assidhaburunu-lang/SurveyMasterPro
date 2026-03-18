@@ -282,8 +282,8 @@ const LandingPage = () => {
           <div className="absolute -inset-4 bg-indigo-600/5 rounded-[40px] blur-3xl" />
           <div className="relative bg-white rounded-[40px] border border-zinc-100 shadow-2xl overflow-hidden aspect-video lg:aspect-square">
             <img 
-              src="https://picsum.photos/seed/surveymaster/1200/1200" 
-              alt="Survey Master Pro Dashboard" 
+              src="https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=1200&q=80" 
+              alt="Survey Master Pro Research Analytics" 
               className="w-full h-full object-cover"
               referrerPolicy="no-referrer"
             />
