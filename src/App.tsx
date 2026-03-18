@@ -324,10 +324,10 @@ const LandingPage = () => {
               <ChevronRight className="w-5 h-5" />
             </Link>
             <Link 
-              to="/group-login" 
+              to="/enumerator-login" 
               className="bg-white text-zinc-700 border border-zinc-200 px-10 py-5 rounded-2xl font-bold text-lg hover:bg-zinc-50 transition-all flex items-center gap-2"
             >
-              Group Survey Login
+              Enumerator Login
               <Users className="w-5 h-5" />
             </Link>
           </div>
@@ -412,7 +412,7 @@ const LandingPage = () => {
   );
 };
 
-const GroupLogin = () => {
+const EnumeratorLogin = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -428,7 +428,7 @@ const GroupLogin = () => {
 
     try {
       const q = query(
-        collectionGroup(db, 'group_users'),
+        collectionGroup(db, 'enumerator_users'),
         where('username', '==', username),
         where('password', '==', password)
       );
@@ -456,14 +456,14 @@ const GroupLogin = () => {
       } else if (validSurveys.length === 1) {
         // Auto-login and redirect
         const surveyId = validSurveys[0].id;
-        sessionStorage.setItem(`group_auth_${surveyId}`, JSON.stringify({ username, password }));
+        sessionStorage.setItem(`enumerator_auth_${surveyId}`, JSON.stringify({ username, password }));
         navigate(`/public/survey/${surveyId}`);
       } else {
         // Multiple surveys found, let user choose
         setMatchingSurveys(validSurveys);
       }
     } catch (e: any) {
-      console.error('Group login error:', e);
+      console.error('Enumerator login error:', e);
       if (e.message?.includes('index')) {
         setError('System configuration error: Missing database index. Please contact administrator.');
       } else {
@@ -475,7 +475,7 @@ const GroupLogin = () => {
   };
 
   const selectSurvey = (surveyId: string) => {
-    sessionStorage.setItem(`group_auth_${surveyId}`, JSON.stringify({ username, password }));
+    sessionStorage.setItem(`enumerator_auth_${surveyId}`, JSON.stringify({ username, password }));
     navigate(`/public/survey/${surveyId}`);
   };
 
@@ -490,7 +490,7 @@ const GroupLogin = () => {
           <div className="inline-block bg-indigo-50 p-4 rounded-2xl mb-4">
             <Users className="text-indigo-600 w-8 h-8" />
           </div>
-          <h2 className="text-2xl font-bold text-zinc-900">Group Survey Login</h2>
+          <h2 className="text-2xl font-bold text-zinc-900">Enumerator Login</h2>
           <p className="text-zinc-500 mt-2">Enter your assigned credentials</p>
         </div>
 
@@ -638,9 +638,9 @@ const LoginPage = () => {
         </p>
 
         <div className="mt-8 pt-8 border-t border-zinc-100 text-center">
-          <p className="text-sm text-zinc-500 mb-2">Have a group survey code?</p>
-          <Link to="/group-login" className="text-indigo-600 font-bold hover:underline">
-            Group Survey Login
+          <p className="text-sm text-zinc-500 mb-2">Have an enumerator survey code?</p>
+          <Link to="/enumerator-login" className="text-indigo-600 font-bold hover:underline">
+            Enumerator Login
           </Link>
         </div>
       </motion.div>
@@ -657,10 +657,10 @@ const AdminDashboard = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showQRModal, setShowQRModal] = useState<any | null>(null);
   const [editingSurvey, setEditingSurvey] = useState<any | null>(null);
-  const [newSurvey, setNewSurvey] = useState({ title: '', description: '', is_public: false, is_group: false, language: 'en' });
-  const [groupUsersFile, setGroupUsersFile] = useState<File | null>(null);
-  const [groupUsers, setGroupUsers] = useState<any[]>([]);
-  const [groupSubmissions, setGroupSubmissions] = useState<any[]>([]);
+  const [newSurvey, setNewSurvey] = useState({ title: '', description: '', is_public: false, is_enumerator: false, language: 'en' });
+  const [enumeratorUsersFile, setEnumeratorUsersFile] = useState<File | null>(null);
+  const [enumeratorUsers, setEnumeratorUsers] = useState<any[]>([]);
+  const [enumeratorSubmissions, setEnumeratorSubmissions] = useState<any[]>([]);
 
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -676,6 +676,7 @@ const AdminDashboard = () => {
   const [showAddQuestionModal, setShowAddQuestionModal] = useState(false);
   const [newQuestion, setNewQuestion] = useState({ text: '', type: 'text', options: [''] });
   const [generatingReport, setGeneratingReport] = useState(false);
+  const [reportLanguage, setReportLanguage] = useState<'en' | 'dv'>('en');
   const [confirmModal, setConfirmModal] = useState<{ show: boolean, title: string, message: string, onConfirm: () => void } | null>(null);
 
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
@@ -734,32 +735,32 @@ const AdminDashboard = () => {
     return unsubscribe;
   };
 
-  const fetchGroupUsers = () => {
-    if (!selectedSurvey || !selectedSurvey.is_group) return;
-    const q = query(collection(db, 'surveys', selectedSurvey.id, 'group_users'));
+  const fetchEnumeratorUsers = () => {
+    if (!selectedSurvey || !selectedSurvey.is_enumerator) return;
+    const q = query(collection(db, 'surveys', selectedSurvey.id, 'enumerator_users'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setGroupUsers(data);
+      setEnumeratorUsers(data);
     });
     return unsubscribe;
   };
 
-  const fetchGroupSubmissions = () => {
-    if (!selectedSurvey || !selectedSurvey.is_group) return;
+  const fetchEnumeratorSubmissions = () => {
+    if (!selectedSurvey || !selectedSurvey.is_enumerator) return;
     const q = query(collection(db, 'responses'), where('surveyId', '==', selectedSurvey.id));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const rawResponses = snapshot.docs.map(doc => doc.data());
       // Group by submissionId to see who submitted
       const submissions: Record<string, any> = {};
       rawResponses.forEach(resp => {
-        if (resp.groupUsername) {
-          submissions[resp.groupUsername] = {
-            username: resp.groupUsername,
+        if (resp.enumeratorUsername) {
+          submissions[resp.enumeratorUsername] = {
+            username: resp.enumeratorUsername,
             submittedAt: resp.submittedAt
           };
         }
       });
-      setGroupSubmissions(Object.values(submissions));
+      setEnumeratorSubmissions(Object.values(submissions));
     });
     return unsubscribe;
   };
@@ -810,15 +811,15 @@ const AdminDashboard = () => {
       const unsubRespondents = fetchRespondents();
       const unsubAssignments = fetchAssignments();
       const unsubStats = fetchStats();
-      const unsubGroupUsers = fetchGroupUsers();
-      const unsubGroupSubmissions = fetchGroupSubmissions();
+      const unsubEnumeratorUsers = fetchEnumeratorUsers();
+      const unsubEnumeratorSubmissions = fetchEnumeratorSubmissions();
       return () => {
         unsubQuestions?.();
         unsubRespondents?.();
         unsubAssignments?.();
         unsubStats?.();
-        unsubGroupUsers?.();
-        unsubGroupSubmissions?.();
+        unsubEnumeratorUsers?.();
+        unsubEnumeratorSubmissions?.();
       };
     }
   }, [selectedSurvey]);
@@ -915,7 +916,7 @@ const AdminDashboard = () => {
         isActive: true
       });
 
-      if (newSurvey.is_group && groupUsersFile) {
+      if (newSurvey.is_enumerator && enumeratorUsersFile) {
         const reader = new FileReader();
         reader.onload = async (e) => {
           const data = new Uint8Array(e.target?.result as ArrayBuffer);
@@ -927,7 +928,7 @@ const AdminDashboard = () => {
           const batch = writeBatch(db);
           jsonData.forEach((row) => {
             if (row.username && row.password) {
-              const userRef = doc(collection(db, 'surveys', surveyRef.id, 'group_users'));
+              const userRef = doc(collection(db, 'surveys', surveyRef.id, 'enumerator_users'));
               batch.set(userRef, {
                 username: String(row.username),
                 password: String(row.password),
@@ -937,12 +938,12 @@ const AdminDashboard = () => {
           });
           await batch.commit();
         };
-        reader.readAsArrayBuffer(groupUsersFile);
+        reader.readAsArrayBuffer(enumeratorUsersFile);
       }
 
       setShowCreateModal(false);
-      setNewSurvey({ title: '', description: '', is_public: false, is_group: false, language: 'en' });
-      setGroupUsersFile(null);
+      setNewSurvey({ title: '', description: '', is_public: false, is_enumerator: false, language: 'en' });
+      setEnumeratorUsersFile(null);
     } catch (e) {
       console.error('Failed to create survey:', e);
     }
@@ -1046,11 +1047,17 @@ const AdminDashboard = () => {
 
       const statsSummary = questionBreakdown.map(q => `Question: ${q.text}\nType: ${q.type}\nData: ${q.details}`).join('\n\n');
 
+      const languageInstruction = reportLanguage === 'dv' 
+        ? "IMPORTANT: You MUST write the entire report in Dhivehi (Maldivian language). Use Dhivehi script."
+        : "IMPORTANT: You MUST write the entire report in English.";
+
       const prompt = `Analyze the following survey results for the survey titled "${selectedSurvey.title}". 
       Provide a professional report with the following sections:
       1. Executive Summary: A brief overview of the results.
       2. Key Insights: Use numbered bullets (1., 2., 3., etc.) for each insight.
       3. Recommendations: Use standard bullet points (• or -) for each recommendation.
+      
+      ${languageInstruction}
       
       IMPORTANT: Do NOT use any Markdown formatting symbols like asterisks (*) or hashes (#) in your response. Use plain text only for the content, with clear section titles.
       
@@ -1068,20 +1075,24 @@ const AdminDashboard = () => {
       aiAnalysis = aiAnalysis.replace(/[*#]/g, '');
 
       // 2. Create Word Document
+      const isRTL = reportLanguage === 'dv';
+      const alignment = isRTL ? AlignmentType.RIGHT : AlignmentType.LEFT;
+
       const sections: any[] = [
         new Paragraph({
-          text: `Survey Analysis Report: ${selectedSurvey.title}`,
+          text: `${isRTL ? 'ސަރވޭ އެނަލިސިސް ރިޕޯޓް' : 'Survey Analysis Report'}: ${selectedSurvey.title}`,
           heading: HeadingLevel.TITLE,
           alignment: AlignmentType.CENTER,
         }),
         new Paragraph({
-          text: `Generated on ${new Date().toLocaleDateString()}`,
+          text: `${isRTL ? 'ޖެނެރޭޓް ކުރި ތާރީޚް' : 'Generated on'} ${new Date().toLocaleDateString()}`,
           alignment: AlignmentType.CENTER,
         }),
         new Paragraph({ text: "", spacing: { after: 400 } }),
         new Paragraph({
-          text: "Executive Summary & AI Analysis",
+          text: isRTL ? "އެގްޒެކެޓިވް ސަމަރީ އަދި އޭއައި އެނަލިސިސް" : "Executive Summary & AI Analysis",
           heading: HeadingLevel.HEADING_1,
+          alignment,
         }),
       ];
 
@@ -1091,14 +1102,16 @@ const AdminDashboard = () => {
           sections.push(new Paragraph({
             children: [new TextRun(line)],
             spacing: { before: 200 },
+            alignment,
           }));
         }
       });
 
       sections.push(new Paragraph({ text: "", spacing: { after: 400 } }));
       sections.push(new Paragraph({
-        text: "Detailed Question Breakdown",
+        text: isRTL ? "ސުވާލުތަކުގެ ތަފްސީލް" : "Detailed Question Breakdown",
         heading: HeadingLevel.HEADING_1,
+        alignment,
       }));
 
       // Add Question Breakdown text
@@ -1106,15 +1119,18 @@ const AdminDashboard = () => {
         sections.push(new Paragraph({
           children: [new TextRun({ text: q.text, bold: true })],
           spacing: { before: 400 },
+          alignment,
         }));
         sections.push(new Paragraph({
-          children: [new TextRun({ text: `Type: ${q.type}`, italics: true })],
+          children: [new TextRun({ text: `${isRTL ? 'ބާވަތް' : 'Type'}: ${q.type}`, italics: true })],
+          alignment,
         }));
         
         q.details.split('\n').forEach(detailLine => {
           sections.push(new Paragraph({
             children: [new TextRun(detailLine)],
-            indent: { left: 720 }, // Indent details
+            indent: isRTL ? { right: 720 } : { left: 720 },
+            alignment,
           }));
         });
       });
@@ -1618,17 +1634,17 @@ const AdminDashboard = () => {
                 <div className="flex items-center gap-3 p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
                   <input 
                     type="checkbox" 
-                    id="is_group"
+                    id="is_enumerator"
                     className="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500"
-                    checked={newSurvey.is_group}
-                    onChange={(e) => setNewSurvey({ ...newSurvey, is_group: e.target.checked, is_public: e.target.checked ? false : newSurvey.is_public })}
+                    checked={newSurvey.is_enumerator}
+                    onChange={(e) => setNewSurvey({ ...newSurvey, is_enumerator: e.target.checked, is_public: e.target.checked ? false : newSurvey.is_enumerator })}
                   />
-                  <label htmlFor="is_group" className="text-sm font-bold text-zinc-700 cursor-pointer">
-                    Group Survey
+                  <label htmlFor="is_enumerator" className="text-sm font-bold text-zinc-700 cursor-pointer">
+                    Enumerator Survey
                     <span className="block text-xs font-normal text-zinc-500">Requires specific username and password</span>
                   </label>
                 </div>
-                {newSurvey.is_group && (
+                {newSurvey.is_enumerator && (
                   <div>
                     <label className="block text-sm font-bold text-zinc-700 mb-1">Upload User List (Excel)</label>
                     <div className="border-2 border-dashed border-zinc-200 rounded-xl p-4 text-center hover:border-indigo-400 transition-colors cursor-pointer relative">
@@ -1636,11 +1652,11 @@ const AdminDashboard = () => {
                         type="file" 
                         accept=".xlsx, .xls" 
                         className="absolute inset-0 opacity-0 cursor-pointer"
-                        onChange={(e) => setGroupUsersFile(e.target.files?.[0] || null)}
+                        onChange={(e) => setEnumeratorUsersFile(e.target.files?.[0] || null)}
                       />
                       <FileSpreadsheet className="w-6 h-6 text-zinc-300 mx-auto mb-2" />
                       <span className="text-xs text-zinc-500 block">
-                        {groupUsersFile ? groupUsersFile.name : 'Select Excel file with username & password columns'}
+                        {enumeratorUsersFile ? enumeratorUsersFile.name : 'Select Excel file with username & password columns'}
                       </span>
                     </div>
                   </div>
@@ -1785,7 +1801,7 @@ const AdminDashboard = () => {
           >
             Assignments
           </button>
-          {selectedSurvey.is_group && (
+          {selectedSurvey.is_enumerator && (
             <button 
               onClick={() => setActiveTab('tracking')}
               className={cn(
@@ -1799,7 +1815,7 @@ const AdminDashboard = () => {
         </div>
       </div>
 
-      {activeTab === 'tracking' && selectedSurvey.is_group && (
+      {activeTab === 'tracking' && selectedSurvey.is_enumerator && (
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1808,11 +1824,11 @@ const AdminDashboard = () => {
           <div className="flex justify-between items-center mb-8">
             <h2 className="text-xl font-bold text-zinc-900 flex items-center gap-2">
               <Users className="w-5 h-5 text-indigo-600" />
-              Group Respondent Tracking
+              Enumerator Respondent Tracking
             </h2>
             <div className="flex items-center gap-4">
               <div className="text-right">
-                <p className="text-sm font-bold text-zinc-900">{groupSubmissions.length} / {groupUsers.length}</p>
+                <p className="text-sm font-bold text-zinc-900">{enumeratorSubmissions.length} / {enumeratorUsers.length}</p>
                 <p className="text-xs text-zinc-500">Submissions</p>
               </div>
             </div>
@@ -1828,8 +1844,8 @@ const AdminDashboard = () => {
                 </tr>
               </thead>
               <tbody>
-                {groupUsers.map((user) => {
-                  const submission = groupSubmissions.find(s => s.username === user.username);
+                {enumeratorUsers.map((user) => {
+                  const submission = enumeratorSubmissions.find(s => s.username === user.username);
                   return (
                     <tr key={user.id} className="border-b border-zinc-50 hover:bg-zinc-50/50 transition-colors">
                       <td className="py-4 px-4 font-bold text-zinc-900">{user.username}</td>
@@ -2011,6 +2027,26 @@ const AdminDashboard = () => {
                   Response Statistics
                 </h2>
                 <div className="flex items-center gap-3">
+                  <div className="flex bg-zinc-100 p-1 rounded-xl">
+                    <button 
+                      onClick={() => setReportLanguage('en')}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
+                        reportLanguage === 'en' ? "bg-white text-indigo-600 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+                      )}
+                    >
+                      EN
+                    </button>
+                    <button 
+                      onClick={() => setReportLanguage('dv')}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
+                        reportLanguage === 'dv' ? "bg-white text-indigo-600 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+                      )}
+                    >
+                      DV
+                    </button>
+                  </div>
                   <button 
                     onClick={generateAIReport}
                     disabled={generatingReport || stats.length === 0}
@@ -2873,22 +2909,22 @@ const PublicSurvey = () => {
   const [history, setHistory] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
   
-  // Group login states
-  const [isGroupLoggedIn, setIsGroupLoggedIn] = useState(false);
-  const [groupUsername, setGroupUsername] = useState('');
-  const [groupPassword, setGroupPassword] = useState('');
+  // Enumerator login states
+  const [isEnumeratorLoggedIn, setIsEnumeratorLoggedIn] = useState(false);
+  const [enumeratorUsername, setEnumeratorUsername] = useState('');
+  const [enumeratorPassword, setEnumeratorPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loggingIn, setLoggingIn] = useState(false);
 
   useEffect(() => {
     if (id) {
-      // Check for session-based group login
-      const sessionAuth = sessionStorage.getItem(`group_auth_${id}`);
+      // Check for session-based enumerator login
+      const sessionAuth = sessionStorage.getItem(`enumerator_auth_${id}`);
       if (sessionAuth) {
         try {
           const { username, password } = JSON.parse(sessionAuth);
-          setGroupUsername(username);
-          setGroupPassword(password);
+          setEnumeratorUsername(username);
+          setEnumeratorPassword(password);
           // We'll trigger the login check in fetchSurvey or a separate effect
         } catch (e) {
           console.error('Failed to parse session auth:', e);
@@ -2899,11 +2935,11 @@ const PublicSurvey = () => {
   }, [id]);
 
   useEffect(() => {
-    if (survey?.is_group && groupUsername && groupPassword && !isGroupLoggedIn && !loggingIn) {
+    if (survey?.is_enumerator && enumeratorUsername && enumeratorPassword && !isEnumeratorLoggedIn && !loggingIn) {
       // Auto-login if credentials are provided via session
-      handleGroupLogin(new Event('submit') as any);
+      handleEnumeratorLogin(new Event('submit') as any);
     }
-  }, [survey, groupUsername, groupPassword, isGroupLoggedIn]);
+  }, [survey, enumeratorUsername, enumeratorPassword, isEnumeratorLoggedIn]);
 
   const fetchSurvey = async () => {
     if (!id) return;
@@ -2918,7 +2954,7 @@ const PublicSurvey = () => {
         return;
       }
       
-      if (!surveySnap.exists() || (!surveySnap.data().is_public && !surveySnap.data().is_group)) {
+      if (!surveySnap.exists() || (!surveySnap.data().is_public && !surveySnap.data().is_enumerator)) {
         throw new Error('Survey not found or not accessible');
       }
       
@@ -2987,20 +3023,20 @@ const PublicSurvey = () => {
     setCurrentIndex(prevIndex);
   };
 
-  const handleGroupLogin = async (e: React.FormEvent) => {
+  const handleEnumeratorLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!id) return;
     setLoggingIn(true);
     setLoginError('');
     try {
       const q = query(
-        collection(db, 'surveys', id, 'group_users'),
-        where('username', '==', groupUsername),
-        where('password', '==', groupPassword)
+        collection(db, 'surveys', id, 'enumerator_users'),
+        where('username', '==', enumeratorUsername),
+        where('password', '==', enumeratorPassword)
       );
       const snap = await getDocs(q);
       if (!snap.empty) {
-        setIsGroupLoggedIn(true);
+        setIsEnumeratorLoggedIn(true);
       } else {
         setLoginError('Invalid username or password');
       }
@@ -3027,8 +3063,8 @@ const PublicSurvey = () => {
       reachedQuestionIds.forEach(qId => {
         const respRef = doc(collection(db, 'responses'));
         batch.set(respRef, {
-          userId: null, // Public or Group submission
-          groupUsername: survey.is_group ? groupUsername : null,
+          userId: null, // Public or Enumerator submission
+          enumeratorUsername: survey.is_enumerator ? enumeratorUsername : null,
           submissionId,
           surveyId: id,
           questionId: qId,
@@ -3101,7 +3137,7 @@ const PublicSurvey = () => {
 
   const isRTL = survey?.language === 'dv';
 
-  if (survey?.is_group && !isGroupLoggedIn) {
+  if (survey?.is_enumerator && !isEnumeratorLoggedIn) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-zinc-50 p-4">
         <motion.div 
@@ -3119,15 +3155,15 @@ const PublicSurvey = () => {
           <h2 className="text-2xl font-bold text-zinc-900 mb-2 text-center">{survey.title}</h2>
           <p className="text-zinc-500 text-center mb-8">Please enter your credentials to access this survey.</p>
           
-          <form onSubmit={handleGroupLogin} className="space-y-4">
+          <form onSubmit={handleEnumeratorLogin} className="space-y-4">
             <div>
               <label className="block text-sm font-bold text-zinc-700 mb-1">Username</label>
               <input 
                 type="text" 
                 required
                 className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-indigo-500 outline-none"
-                value={groupUsername}
-                onChange={(e) => setGroupUsername(e.target.value)}
+                value={enumeratorUsername}
+                onChange={(e) => setEnumeratorUsername(e.target.value)}
               />
             </div>
             <div>
@@ -3136,8 +3172,8 @@ const PublicSurvey = () => {
                 type="password" 
                 required
                 className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-indigo-500 outline-none"
-                value={groupPassword}
-                onChange={(e) => setGroupPassword(e.target.value)}
+                value={enumeratorPassword}
+                onChange={(e) => setEnumeratorPassword(e.target.value)}
               />
             </div>
             {loginError && <p className="text-red-500 text-sm font-medium">{loginError}</p>}
@@ -3347,7 +3383,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<LandingPage />} />
             <Route path="/login" element={<LoginPage />} />
-            <Route path="/group-login" element={<GroupLogin />} />
+            <Route path="/enumerator-login" element={<EnumeratorLogin />} />
             <Route path="/public/survey/:id" element={<PublicSurvey />} />
             <Route 
               path="/admin" 

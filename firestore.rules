@@ -17,6 +17,7 @@ service cloud.firestore {
     //   - title: string (required)
     //   - description: string
     //   - is_public: bool
+    //   - is_enumerator: bool
     //   - language: string
     //   - createdBy: string (uid)
     //   - createdAt: timestamp
@@ -37,6 +38,7 @@ service cloud.firestore {
     // Collection: responses
     // Fields:
     //   - userId: string
+    //   - enumeratorUsername: string
     //   - submissionId: string
     //   - surveyId: string
     //   - questionId: string
@@ -90,12 +92,12 @@ service cloud.firestore {
     }
 
     function isValidSurvey(data) {
-      return hasOnlyAllowedFields(['title', 'description', 'is_public', 'is_group', 'language', 'createdBy', 'createdAt']) &&
+      return hasOnlyAllowedFields(['title', 'description', 'is_public', 'is_enumerator', 'language', 'createdBy', 'createdAt', 'isActive', 'is_group']) &&
              data.title is string && data.title.size() > 0 && data.title.size() < 200;
     }
 
     function isValidResponse(data) {
-      return hasOnlyAllowedFields(['userId', 'groupUsername', 'submissionId', 'surveyId', 'questionId', 'answer', 'submittedAt']) &&
+      return hasOnlyAllowedFields(['userId', 'enumeratorUsername', 'submissionId', 'surveyId', 'questionId', 'answer', 'submittedAt', 'groupUsername']) &&
              data.answer is string && data.answer.size() < 5000;
     }
 
@@ -112,13 +114,22 @@ service cloud.firestore {
     }
 
     match /surveys/{surveyId} {
-      allow read: if isAuthenticated() || resource.data.is_public == true || resource.data.is_group == true;
+      allow read: if isAuthenticated() || resource.data.is_public == true || resource.data.is_enumerator == true || resource.data.is_group == true;
+      allow write: if isAdmin();
+    }
+
+    match /surveys/{surveyId}/enumerator_users/{userId} {
+      allow read: if true;
       allow write: if isAdmin();
     }
 
     match /surveys/{surveyId}/group_users/{userId} {
       allow read: if true;
       allow write: if isAdmin();
+    }
+
+    match /{path=**}/enumerator_users/{userId} {
+      allow read: if true;
     }
 
     match /{path=**}/group_users/{userId} {
@@ -128,6 +139,7 @@ service cloud.firestore {
     match /questions/{questionId} {
       allow read: if isAuthenticated() || 
                     get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_public == true ||
+                    get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_enumerator == true ||
                     get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_group == true;
       allow write: if isAdmin();
     }
@@ -141,6 +153,7 @@ service cloud.firestore {
       allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
       allow create: if (isAuthenticated() && request.resource.data.userId == request.auth.uid) || 
                     (get(/databases/$(database)/documents/surveys/$(request.resource.data.surveyId)).data.is_public == true) ||
+                    (get(/databases/$(database)/documents/surveys/$(request.resource.data.surveyId)).data.is_enumerator == true) ||
                     (get(/databases/$(database)/documents/surveys/$(request.resource.data.surveyId)).data.is_group == true);
       allow update, delete: if isAdmin();
     }
