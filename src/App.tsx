@@ -98,6 +98,7 @@ import {
   query, 
   where, 
   orderBy, 
+  limit,
   onSnapshot,
   serverTimestamp,
   Timestamp,
@@ -657,7 +658,14 @@ const AdminDashboard = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showQRModal, setShowQRModal] = useState<any | null>(null);
   const [editingSurvey, setEditingSurvey] = useState<any | null>(null);
-  const [newSurvey, setNewSurvey] = useState({ title: '', description: '', is_public: false, is_enumerator: false, language: 'en' });
+  const [newSurvey, setNewSurvey] = useState({ 
+    title: '', 
+    description: '', 
+    is_public: false, 
+    is_enumerator: false, 
+    allow_multiple_submissions: false,
+    language: 'en' 
+  });
   const [enumeratorUsersFile, setEnumeratorUsersFile] = useState<File | null>(null);
   const [enumeratorUsers, setEnumeratorUsers] = useState<any[]>([]);
   const [enumeratorSubmissions, setEnumeratorSubmissions] = useState<any[]>([]);
@@ -674,7 +682,7 @@ const AdminDashboard = () => {
   const [activeTab, setActiveTab] = useState<'stats' | 'preview' | 'assignments' | 'tracking'>('stats');
   const [vizPreferences, setVizPreferences] = useState<Record<number, string>>({});
   const [showAddQuestionModal, setShowAddQuestionModal] = useState(false);
-  const [newQuestion, setNewQuestion] = useState({ text: '', type: 'text', options: [''] });
+  const [newQuestion, setNewQuestion] = useState({ text: '', type: 'text', options: [''], required: true });
   const [generatingReport, setGeneratingReport] = useState(false);
   const [reportLanguage, setReportLanguage] = useState<'en' | 'dv'>('en');
   const [confirmModal, setConfirmModal] = useState<{ show: boolean, title: string, message: string, onConfirm: () => void } | null>(null);
@@ -750,17 +758,30 @@ const AdminDashboard = () => {
     const q = query(collection(db, 'responses'), where('surveyId', '==', selectedSurvey.id));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const rawResponses = snapshot.docs.map(doc => doc.data());
-      // Group by submissionId to see who submitted
-      const submissions: Record<string, any> = {};
+      // Group by submissionId to count submissions per enumerator
+      const submissionsByEnumerator: Record<string, Set<string>> = {};
+      const lastSubmissionAt: Record<string, any> = {};
+
       rawResponses.forEach(resp => {
-        if (resp.enumeratorUsername) {
-          submissions[resp.enumeratorUsername] = {
-            username: resp.enumeratorUsername,
-            submittedAt: resp.submittedAt
-          };
+        if (resp.enumeratorUsername && resp.submissionId) {
+          if (!submissionsByEnumerator[resp.enumeratorUsername]) {
+            submissionsByEnumerator[resp.enumeratorUsername] = new Set();
+          }
+          submissionsByEnumerator[resp.enumeratorUsername].add(resp.submissionId);
+          
+          if (!lastSubmissionAt[resp.enumeratorUsername] || resp.submittedAt?.toMillis() > lastSubmissionAt[resp.enumeratorUsername].toMillis()) {
+            lastSubmissionAt[resp.enumeratorUsername] = resp.submittedAt;
+          }
         }
       });
-      setEnumeratorSubmissions(Object.values(submissions));
+
+      const data = Object.keys(submissionsByEnumerator).map(username => ({
+        username,
+        submissionCount: submissionsByEnumerator[username].size,
+        lastSubmittedAt: lastSubmissionAt[username]
+      }));
+      
+      setEnumeratorSubmissions(data);
     });
     return unsubscribe;
   };
@@ -831,7 +852,8 @@ const AdminDashboard = () => {
         surveyId: selectedSurvey.id,
         text: newQuestion.text,
         type: newQuestion.type,
-        order: questions.length + 1
+        order: questions.length + 1,
+        required: newQuestion.required
       });
 
       if (newQuestion.type === 'mcq') {
@@ -850,7 +872,7 @@ const AdminDashboard = () => {
       }
       
       setShowAddQuestionModal(false);
-      setNewQuestion({ text: '', type: 'mcq', options: [''] });
+      setNewQuestion({ text: '', type: 'mcq', options: [''], required: true });
     } catch (e) {
       console.error('Failed to add question:', e);
     }
@@ -906,6 +928,19 @@ const AdminDashboard = () => {
     return { mean, median, mode };
   };
 
+  const toggleMultipleSubmissions = async () => {
+    if (!selectedSurvey) return;
+    const newValue = !selectedSurvey.allow_multiple_submissions;
+    try {
+      await updateDoc(doc(db, 'surveys', selectedSurvey.id), {
+        allow_multiple_submissions: newValue
+      });
+      setSelectedSurvey({ ...selectedSurvey, allow_multiple_submissions: newValue });
+    } catch (error) {
+      console.error('Error updating multiple submissions:', error);
+    }
+  };
+
   const handleCreateSurvey = async () => {
     if (!auth.currentUser) return;
     try {
@@ -942,7 +977,14 @@ const AdminDashboard = () => {
       }
 
       setShowCreateModal(false);
-      setNewSurvey({ title: '', description: '', is_public: false, is_enumerator: false, language: 'en' });
+      setNewSurvey({ 
+        title: '', 
+        description: '', 
+        is_public: false, 
+        is_enumerator: false, 
+        allow_multiple_submissions: false,
+        language: 'en' 
+      });
       setEnumeratorUsersFile(null);
     } catch (e) {
       console.error('Failed to create survey:', e);
@@ -997,6 +1039,8 @@ const AdminDashboard = () => {
       title: survey.title, 
       description: survey.description, 
       is_public: survey.is_public,
+      is_enumerator: survey.is_enumerator || false,
+      allow_multiple_submissions: survey.allow_multiple_submissions || false,
       language: survey.language || 'en'
     });
     setShowCreateModal(true);
@@ -1009,11 +1053,20 @@ const AdminDashboard = () => {
         title: newSurvey.title,
         description: newSurvey.description,
         is_public: newSurvey.is_public,
+        is_enumerator: newSurvey.is_enumerator,
+        allow_multiple_submissions: newSurvey.allow_multiple_submissions,
         language: newSurvey.language
       });
       setEditingSurvey(null);
       setShowCreateModal(false);
-      setNewSurvey({ title: '', description: '', is_public: false, language: 'en' });
+      setNewSurvey({ 
+        title: '', 
+        description: '', 
+        is_public: false, 
+        is_enumerator: false, 
+        allow_multiple_submissions: false,
+        language: 'en' 
+      });
     } catch (e) {
       console.error('Failed to update survey:', e);
     }
@@ -1309,6 +1362,14 @@ const AdminDashboard = () => {
     }
   };
 
+  const handleToggleRequired = async (id: string, currentRequired: boolean) => {
+    try {
+      await updateDoc(doc(db, 'questions', id), { required: !currentRequired });
+    } catch (e) {
+      console.error('Failed to toggle required status:', e);
+    }
+  };
+
 
   const handleUpload = async () => {
     if (!file || !selectedSurvey) return;
@@ -1335,6 +1396,7 @@ const AdminDashboard = () => {
         const textIdx = headers.indexOf('text');
         const typeIdx = headers.indexOf('type');
         const optionsIdx = headers.indexOf('options');
+        const requiredIdx = headers.indexOf('required');
 
         if (textIdx === -1 || typeIdx === -1) {
           setMessage('Excel file must contain "text" and "type" columns');
@@ -1343,11 +1405,17 @@ const AdminDashboard = () => {
         }
 
         const validTypes = ['mcq', 'text', 'date', 'time', 'number'];
-        const processedData = dataRows.map(row => ({
-          text: row[textIdx],
-          type: String(row[typeIdx] || '').toLowerCase().trim(),
-          options: optionsIdx !== -1 ? row[optionsIdx] : null
-        })).filter(row => row.text && validTypes.includes(row.type));
+        const processedData = dataRows.map(row => {
+          const rawRequired = requiredIdx !== -1 ? String(row[requiredIdx]).toLowerCase().trim() : 'true';
+          const isRequired = rawRequired !== 'false' && rawRequired !== '0' && rawRequired !== 'no';
+          
+          return {
+            text: row[textIdx],
+            type: String(row[typeIdx] || '').toLowerCase().trim(),
+            options: optionsIdx !== -1 ? row[optionsIdx] : null,
+            required: isRequired
+          };
+        }).filter(row => row.text && validTypes.includes(row.type));
 
         if (processedData.length === 0) {
           setMessage('No valid questions found.');
@@ -1376,7 +1444,8 @@ const AdminDashboard = () => {
             surveyId: selectedSurvey.id,
             text: q.text,
             type: q.type,
-            order: i + 1
+            order: i + 1,
+            required: q.required
           });
 
           if (q.type === 'mcq' && q.options) {
@@ -1645,6 +1714,21 @@ const AdminDashboard = () => {
                   </label>
                 </div>
                 {newSurvey.is_enumerator && (
+                  <div className="flex items-center gap-3 p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                    <input 
+                      type="checkbox" 
+                      id="allow_multiple_submissions"
+                      className="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500"
+                      checked={newSurvey.allow_multiple_submissions}
+                      onChange={(e) => setNewSurvey({ ...newSurvey, allow_multiple_submissions: e.target.checked })}
+                    />
+                    <label htmlFor="allow_multiple_submissions" className="text-sm font-bold text-zinc-700 cursor-pointer">
+                      Allow Multiple Submissions
+                      <span className="block text-xs font-normal text-zinc-500">Enumerator can submit more than once</span>
+                    </label>
+                  </div>
+                )}
+                {newSurvey.is_enumerator && (
                   <div>
                     <label className="block text-sm font-bold text-zinc-700 mb-1">Upload User List (Excel)</label>
                     <div className="border-2 border-dashed border-zinc-200 rounded-xl p-4 text-center hover:border-indigo-400 transition-colors cursor-pointer relative">
@@ -1826,13 +1910,36 @@ const AdminDashboard = () => {
               <Users className="w-5 h-5 text-indigo-600" />
               Enumerator Respondent Tracking
             </h2>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-6">
+              <div className="flex items-center gap-2 bg-zinc-50 px-4 py-2 rounded-xl border border-zinc-100">
+                <span className="text-sm font-bold text-zinc-700">Allow Multiple Submissions</span>
+                <button
+                  onClick={toggleMultipleSubmissions}
+                  className={cn(
+                    "w-12 h-6 rounded-full transition-all relative",
+                    selectedSurvey.allow_multiple_submissions ? "bg-indigo-600" : "bg-zinc-300"
+                  )}
+                >
+                  <div className={cn(
+                    "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                    selectedSurvey.allow_multiple_submissions ? "left-7" : "left-1"
+                  )} />
+                </button>
+              </div>
+              <div className="flex items-center gap-4">
+              <div className="text-right">
+                <p className="text-sm font-bold text-zinc-900">
+                  {enumeratorSubmissions.reduce((acc, s) => acc + s.submissionCount, 0)}
+                </p>
+                <p className="text-xs text-zinc-500">Total Submissions</p>
+              </div>
               <div className="text-right">
                 <p className="text-sm font-bold text-zinc-900">{enumeratorSubmissions.length} / {enumeratorUsers.length}</p>
-                <p className="text-xs text-zinc-500">Submissions</p>
+                <p className="text-xs text-zinc-500">Active Enumerators</p>
               </div>
             </div>
           </div>
+        </div>
 
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -1840,7 +1947,8 @@ const AdminDashboard = () => {
                 <tr className="border-b border-zinc-100">
                   <th className="text-left py-4 px-4 text-xs font-bold text-zinc-400 uppercase tracking-wider">Username</th>
                   <th className="text-left py-4 px-4 text-xs font-bold text-zinc-400 uppercase tracking-wider">Status</th>
-                  <th className="text-left py-4 px-4 text-xs font-bold text-zinc-400 uppercase tracking-wider">Submitted At</th>
+                  <th className="text-left py-4 px-4 text-xs font-bold text-zinc-400 uppercase tracking-wider">Submissions</th>
+                  <th className="text-left py-4 px-4 text-xs font-bold text-zinc-400 uppercase tracking-wider">Last Submission</th>
                 </tr>
               </thead>
               <tbody>
@@ -1856,9 +1964,12 @@ const AdminDashboard = () => {
                           <span className="bg-amber-50 text-amber-600 text-xs font-bold px-3 py-1 rounded-full">Pending</span>
                         )}
                       </td>
+                      <td className="py-4 px-4">
+                        <span className="text-sm font-bold text-zinc-900">{submission?.submissionCount || 0}</span>
+                      </td>
                       <td className="py-4 px-4 text-sm text-zinc-500">
-                        {submission?.submittedAt ? (
-                          new Date(submission.submittedAt.toDate()).toLocaleString()
+                        {submission?.lastSubmittedAt ? (
+                          new Date(submission.lastSubmittedAt.toDate()).toLocaleString()
                         ) : (
                           '-'
                         )}
@@ -2283,6 +2394,19 @@ const AdminDashboard = () => {
                         <option value="time">Time</option>
                       </select>
                       <span className="text-xs text-zinc-400 font-mono">#{q.question_order + 1}</span>
+                      <button 
+                        onClick={() => handleToggleRequired(q.id, q.required !== false)}
+                        className={cn(
+                          "text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider transition-all",
+                          q.required !== false 
+                            ? "bg-indigo-100 text-indigo-600 hover:bg-indigo-200" 
+                            : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200"
+                        )}
+                      >
+                        {q.required !== false 
+                          ? (isRTL ? 'މަޖުބޫރު' : 'Required') 
+                          : (isRTL ? 'އިޚްތިޔާރީ' : 'Optional')}
+                      </button>
                     </div>
                     <div className={cn("flex items-center gap-1", isRTL && "flex-row-reverse")}>
                       <button 
@@ -2402,6 +2526,25 @@ const AdminDashboard = () => {
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div className="flex items-center gap-3 p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                <div className="flex-1">
+                  <p className="text-sm font-bold text-zinc-900">{isRTL ? 'މަޖުބޫރު ސުވާލެއް' : 'Required Question'}</p>
+                  <p className="text-xs text-zinc-500">{isRTL ? 'މި ސުވާލަށް ޖަވާބު ނުދީ ކުރިއަކަށް ނުދެވޭނެ' : 'User must answer this question to proceed'}</p>
+                </div>
+                <button 
+                  onClick={() => setNewQuestion({ ...newQuestion, required: !newQuestion.required })}
+                  className={cn(
+                    "w-12 h-6 rounded-full transition-all relative",
+                    newQuestion.required ? "bg-indigo-600" : "bg-zinc-300"
+                  )}
+                >
+                  <div className={cn(
+                    "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                    newQuestion.required ? (isRTL ? "left-1" : "right-1") : (isRTL ? "right-1" : "left-1")
+                  )} />
+                </button>
               </div>
 
               {newQuestion.type === 'mcq' && (
@@ -2565,7 +2708,7 @@ const RespondentDashboard = () => {
   const currentQuestion = questions[currentIndex];
 
   const handleNext = () => {
-    if (!answers[currentQuestion.id]) {
+    if (currentQuestion.required !== false && !answers[currentQuestion.id]) {
       alert('Please answer the question before proceeding.');
       return;
     }
@@ -2593,7 +2736,7 @@ const RespondentDashboard = () => {
   };
 
   const handleSubmit = async () => {
-    if (!answers[currentQuestion.id]) {
+    if (currentQuestion.required !== false && !answers[currentQuestion.id]) {
       alert('Please answer the final question before submitting.');
       return;
     }
@@ -2874,7 +3017,9 @@ const RespondentDashboard = () => {
               isRTL && "flex-row-reverse"
             )}
           >
-            {isRTL ? 'ކުރިއަށް' : 'Next Question'}
+            {currentQuestion.required === false && !answers[currentQuestion.id] 
+              ? (isRTL ? 'ދޫކޮށްލާ' : 'Skip Question') 
+              : (isRTL ? 'ކުރިއަށް' : 'Next Question')}
             {isRTL ? <ChevronLeft className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
           </button>
         ) : (
@@ -2887,7 +3032,11 @@ const RespondentDashboard = () => {
             )}
           >
             {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
-            {submitting ? (isRTL ? 'ފޮނުވަނީ...' : 'Submitting...') : (isRTL ? 'ނިންމާލާ' : 'Complete Survey')}
+            {submitting 
+              ? (isRTL ? 'ފޮނުވަނީ...' : 'Submitting...') 
+              : (currentQuestion.required === false && !answers[currentQuestion.id]
+                ? (isRTL ? 'ދޫކޮށްލާފައި ނިންމާ' : 'Skip & Complete')
+                : (isRTL ? 'ނިންމާލާ' : 'Complete Survey'))}
           </button>
         )}
       </div>
@@ -2996,10 +3145,11 @@ const PublicSurvey = () => {
   };
 
   const currentQuestion = questions[currentIndex];
+  const isRTL = survey?.language === 'dv';
 
   const handleNext = () => {
-    if (!answers[currentQuestion.id]) {
-      alert('Please answer the question before proceeding.');
+    if (currentQuestion.required !== false && !answers[currentQuestion.id]) {
+      alert(isRTL ? 'މި ސުވާލަށް ޖަވާބު ދެއްވާ!' : 'Please answer the question before proceeding.');
       return;
     }
 
@@ -3049,13 +3199,28 @@ const PublicSurvey = () => {
   };
 
   const handleSubmit = async () => {
-    if (!answers[currentQuestion.id]) {
-      alert('Please answer the final question before submitting.');
+    if (currentQuestion.required !== false && !answers[currentQuestion.id]) {
+      alert(isRTL ? 'މި ސުވާލަށް ޖަވާބު ދެއްވާ!' : 'Please answer the final question before submitting.');
       return;
     }
 
     setSubmitting(true);
     try {
+      if (survey.is_enumerator && !survey.allow_multiple_submissions) {
+        const q = query(
+          collection(db, 'responses'),
+          where('surveyId', '==', id),
+          where('enumeratorUsername', '==', enumeratorUsername),
+          limit(1)
+        );
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          alert(isRTL ? 'މި ސާވޭއަށް ކުރިން ޖަވާބު ދެއްވާފައިވެއެވެ.' : 'You have already submitted a response for this survey.');
+          setSubmitting(false);
+          return;
+        }
+      }
+
       const submissionId = crypto.randomUUID();
       const reachedQuestionIds = [...history, currentIndex].map(idx => questions[idx].id);
       const batch = writeBatch(db);
@@ -3134,8 +3299,6 @@ const PublicSurvey = () => {
   const isLastQuestion = currentIndex >= questions.length - 1 || 
     (currentQuestion.type === 'mcq' && 
      currentQuestion.options.find((o: any) => o.text === answers[currentQuestion.id])?.nextQuestionOrder >= questions.length);
-
-  const isRTL = survey?.language === 'dv';
 
   if (survey?.is_enumerator && !isEnumeratorLoggedIn) {
     return (
@@ -3342,7 +3505,9 @@ const PublicSurvey = () => {
                 isRTL && "flex-row-reverse"
               )}
             >
-              {isRTL ? 'ކުރިއަށް' : 'Next Question'}
+              {currentQuestion.required === false && !answers[currentQuestion.id] 
+                ? (isRTL ? 'ދޫކޮށްލާ' : 'Skip Question') 
+                : (isRTL ? 'ކުރިއަށް' : 'Next Question')}
               {isRTL ? <ChevronLeft className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
             </button>
           ) : (
@@ -3355,7 +3520,11 @@ const PublicSurvey = () => {
               )}
             >
               {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
-              {submitting ? (isRTL ? 'ފޮނުވަނީ...' : 'Submitting...') : (isRTL ? 'ނިންމާލާ' : 'Complete Survey')}
+              {submitting 
+                ? (isRTL ? 'ފޮނުވަނީ...' : 'Submitting...') 
+                : (currentQuestion.required === false && !answers[currentQuestion.id]
+                  ? (isRTL ? 'ދޫކޮށްލާފައި ނިންމާ' : 'Skip & Complete')
+                  : (isRTL ? 'ނިންމާލާ' : 'Complete Survey'))}
             </button>
           )}
         </div>

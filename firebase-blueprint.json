@@ -20,6 +20,8 @@
         "title": { "type": "string" },
         "description": { "type": "string" },
         "is_public": { "type": "boolean" },
+        "is_enumerator": { "type": "boolean" },
+        "allow_multiple_submissions": { "type": "boolean" },
         "language": { "type": "string" },
         "createdBy": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
@@ -34,7 +36,8 @@
         "surveyId": { "type": "string" },
         "text": { "type": "string" },
         "type": { "type": "string", "enum": ["mcq", "text", "date", "number", "time"] },
-        "order": { "type": "integer" }
+        "order": { "type": "integer" },
+        "required": { "type": "boolean" }
       },
       "required": ["surveyId", "text", "type", "order"]
     },

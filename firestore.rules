@@ -28,6 +28,7 @@ service cloud.firestore {
     //   - text: string
     //   - type: string (['mcq', 'text', 'date', 'number', 'time'])
     //   - order: int
+    //   - required: bool
     //
     // Collection: options
     // Fields:
@@ -92,13 +93,18 @@ service cloud.firestore {
     }
 
     function isValidSurvey(data) {
-      return hasOnlyAllowedFields(['title', 'description', 'is_public', 'is_enumerator', 'language', 'createdBy', 'createdAt', 'isActive', 'is_group']) &&
+      return hasOnlyAllowedFields(['title', 'description', 'is_public', 'is_enumerator', 'language', 'createdBy', 'createdAt', 'isActive', 'is_group', 'allow_multiple_submissions']) &&
              data.title is string && data.title.size() > 0 && data.title.size() < 200;
     }
 
     function isValidResponse(data) {
       return hasOnlyAllowedFields(['userId', 'enumeratorUsername', 'submissionId', 'surveyId', 'questionId', 'answer', 'submittedAt', 'groupUsername']) &&
              data.answer is string && data.answer.size() < 5000;
+    }
+
+    function isValidQuestion(data) {
+      return hasOnlyAllowedFields(['surveyId', 'text', 'type', 'order', 'required']) &&
+             data.surveyId is string && data.text is string && data.type is string && data.order is int;
     }
 
     // ===============================================================
@@ -141,7 +147,7 @@ service cloud.firestore {
                     get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_public == true ||
                     get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_enumerator == true ||
                     get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_group == true;
-      allow write: if isAdmin();
+      allow write: if isAdmin() && isValidQuestion(request.resource.data);
     }
 
     match /options/{optionId} {
