@@ -105,6 +105,58 @@ import {
 } from 'firebase/firestore';
 import { auth, db, googleProvider } from './firebase';
 
+// --- Error Handling for Firestore ---
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+const handleFirestoreError = (error: unknown, operationType: OperationType, path: string | null) => {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+};
+
 // --- Auth Context ---
 interface User {
   uid: string;
@@ -2509,7 +2561,13 @@ const PublicSurvey = () => {
     setLoading(true);
     try {
       const surveyRef = doc(db, 'surveys', id);
-      const surveySnap = await getDoc(surveyRef);
+      let surveySnap;
+      try {
+        surveySnap = await getDoc(surveyRef);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.GET, `surveys/${id}`);
+        return;
+      }
       
       if (!surveySnap.exists() || !surveySnap.data().is_public) {
         throw new Error('Survey not found or not public');
@@ -2518,17 +2576,35 @@ const PublicSurvey = () => {
       setSurvey({ id: surveySnap.id, ...surveySnap.data() });
       
       const q = query(collection(db, 'questions'), where('surveyId', '==', id), orderBy('order', 'asc'));
-      const qSnap = await getDocs(q);
+      let qSnap;
+      try {
+        qSnap = await getDocs(q);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.LIST, 'questions');
+        return;
+      }
+
       const questionsData = await Promise.all(qSnap.docs.map(async (qDoc) => {
         const qData = qDoc.data();
         const optQ = query(collection(db, 'options'), where('questionId', '==', qDoc.id));
-        const optSnap = await getDocs(optQ);
+        let optSnap;
+        try {
+          optSnap = await getDocs(optQ);
+        } catch (e) {
+          handleFirestoreError(e, OperationType.LIST, 'options');
+          return { id: qDoc.id, ...qData, options: [] };
+        }
         const options = optSnap.docs.map(oDoc => ({ id: oDoc.id, ...oDoc.data() }));
         return { id: qDoc.id, ...qData, options };
       }));
       setQuestions(questionsData);
     } catch (e: any) {
-      setError(e.message);
+      if (e.message.startsWith('{')) {
+        const info = JSON.parse(e.message);
+        setError(`Permission Denied: ${info.operationType} on ${info.path || 'collection'}. Please check security rules.`);
+      } else {
+        setError(e.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -2586,10 +2662,21 @@ const PublicSurvey = () => {
         });
       });
 
-      await batch.commit();
+      try {
+        await batch.commit();
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, 'responses');
+        return;
+      }
       setSubmitted(true);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Submission failed:', e);
+      if (e.message.startsWith('{')) {
+        const info = JSON.parse(e.message);
+        setError(`Submission failed: Permission Denied on ${info.path || 'collection'}.`);
+      } else {
+        setError(`Submission failed: ${e.message}`);
+      }
     } finally {
       setSubmitting(false);
     }

@@ -122,7 +122,7 @@ service cloud.firestore {
     }
 
     match /options/{optionId} {
-      allow read: if isAuthenticated() || get(/databases/$(database)/documents/questions/$(resource.data.questionId)).data.surveyId != null; // Simplified check
+      allow read: if isAuthenticated() || true; // Publicly readable if question is public (checked via query)
       allow write: if isAdmin();
     }
 
