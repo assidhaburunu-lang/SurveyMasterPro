@@ -90,12 +90,12 @@ service cloud.firestore {
     }
 
     function isValidSurvey(data) {
-      return hasOnlyAllowedFields(['title', 'description', 'is_public', 'language', 'createdBy', 'createdAt']) &&
+      return hasOnlyAllowedFields(['title', 'description', 'is_public', 'is_group', 'language', 'createdBy', 'createdAt']) &&
              data.title is string && data.title.size() > 0 && data.title.size() < 200;
     }
 
     function isValidResponse(data) {
-      return hasOnlyAllowedFields(['userId', 'submissionId', 'surveyId', 'questionId', 'answer', 'submittedAt']) &&
+      return hasOnlyAllowedFields(['userId', 'groupUsername', 'submissionId', 'surveyId', 'questionId', 'answer', 'submittedAt']) &&
              data.answer is string && data.answer.size() < 5000;
     }
 
@@ -112,24 +112,36 @@ service cloud.firestore {
     }
 
     match /surveys/{surveyId} {
-      allow read: if isAuthenticated() || resource.data.is_public == true;
+      allow read: if isAuthenticated() || resource.data.is_public == true || resource.data.is_group == true;
       allow write: if isAdmin();
     }
 
+    match /surveys/{surveyId}/group_users/{userId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /{path=**}/group_users/{userId} {
+      allow read: if true;
+    }
+
     match /questions/{questionId} {
-      allow read: if isAuthenticated() || get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_public == true;
+      allow read: if isAuthenticated() || 
+                    get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_public == true ||
+                    get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_group == true;
       allow write: if isAdmin();
     }
 
     match /options/{optionId} {
-      allow read: if isAuthenticated() || true; // Publicly readable if question is public (checked via query)
+      allow read: if true;
       allow write: if isAdmin();
     }
 
     match /responses/{responseId} {
       allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
       allow create: if (isAuthenticated() && request.resource.data.userId == request.auth.uid) || 
-                    (get(/databases/$(database)/documents/surveys/$(request.resource.data.surveyId)).data.is_public == true);
+                    (get(/databases/$(database)/documents/surveys/$(request.resource.data.surveyId)).data.is_public == true) ||
+                    (get(/databases/$(database)/documents/surveys/$(request.resource.data.surveyId)).data.is_group == true);
       allow update, delete: if isAdmin();
     }
 

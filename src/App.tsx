@@ -101,7 +101,8 @@ import {
   onSnapshot,
   serverTimestamp,
   Timestamp,
-  writeBatch
+  writeBatch,
+  collectionGroup
 } from 'firebase/firestore';
 import { auth, db, googleProvider } from './firebase';
 
@@ -322,12 +323,13 @@ const LandingPage = () => {
               Get Started Now
               <ChevronRight className="w-5 h-5" />
             </Link>
-            <a 
-              href="#features" 
-              className="bg-zinc-100 text-zinc-700 px-10 py-5 rounded-2xl font-bold text-lg hover:bg-zinc-200 transition-all flex items-center gap-2"
+            <Link 
+              to="/group-login" 
+              className="bg-white text-zinc-700 border border-zinc-200 px-10 py-5 rounded-2xl font-bold text-lg hover:bg-zinc-50 transition-all flex items-center gap-2"
             >
-              Learn More
-            </a>
+              Group Survey Login
+              <Users className="w-5 h-5" />
+            </Link>
           </div>
         </motion.div>
 
@@ -410,6 +412,152 @@ const LandingPage = () => {
   );
 };
 
+const GroupLogin = () => {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [matchingSurveys, setMatchingSurveys] = useState<any[]>([]);
+  const navigate = useNavigate();
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    setMatchingSurveys([]);
+
+    try {
+      const q = query(
+        collectionGroup(db, 'group_users'),
+        where('username', '==', username),
+        where('password', '==', password)
+      );
+      
+      const snap = await getDocs(q);
+      
+      if (snap.empty) {
+        setError('Invalid username or password');
+        setLoading(false);
+        return;
+      }
+
+      const surveys = await Promise.all(snap.docs.map(async (userDoc) => {
+        const surveyRef = userDoc.ref.parent.parent;
+        if (!surveyRef) return null;
+        const surveySnap = await getDoc(surveyRef);
+        if (!surveySnap.exists()) return null;
+        return { id: surveySnap.id, ...surveySnap.data() };
+      }));
+
+      const validSurveys = surveys.filter(s => s !== null);
+
+      if (validSurveys.length === 0) {
+        setError('No active surveys found for these credentials');
+      } else if (validSurveys.length === 1) {
+        // Auto-login and redirect
+        const surveyId = validSurveys[0].id;
+        sessionStorage.setItem(`group_auth_${surveyId}`, JSON.stringify({ username, password }));
+        navigate(`/public/survey/${surveyId}`);
+      } else {
+        // Multiple surveys found, let user choose
+        setMatchingSurveys(validSurveys);
+      }
+    } catch (e: any) {
+      console.error('Group login error:', e);
+      if (e.message?.includes('index')) {
+        setError('System configuration error: Missing database index. Please contact administrator.');
+      } else {
+        setError('An error occurred during login. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const selectSurvey = (surveyId: string) => {
+    sessionStorage.setItem(`group_auth_${surveyId}`, JSON.stringify({ username, password }));
+    navigate(`/public/survey/${surveyId}`);
+  };
+
+  return (
+    <div className="min-h-screen bg-zinc-50 flex items-center justify-center p-6">
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="max-w-md w-full bg-white rounded-3xl shadow-xl shadow-zinc-200/50 p-10 border border-zinc-100"
+      >
+        <div className="text-center mb-8">
+          <div className="inline-block bg-indigo-50 p-4 rounded-2xl mb-4">
+            <Users className="text-indigo-600 w-8 h-8" />
+          </div>
+          <h2 className="text-2xl font-bold text-zinc-900">Group Survey Login</h2>
+          <p className="text-zinc-500 mt-2">Enter your assigned credentials</p>
+        </div>
+
+        {matchingSurveys.length > 0 ? (
+          <div className="space-y-4">
+            <p className="text-sm font-bold text-zinc-700 mb-2">Multiple surveys found. Please select one:</p>
+            {matchingSurveys.map(survey => (
+              <button
+                key={survey.id}
+                onClick={() => selectSurvey(survey.id)}
+                className="w-full p-4 text-left rounded-xl border border-zinc-100 hover:border-indigo-500 hover:bg-indigo-50 transition-all group"
+              >
+                <p className="font-bold text-zinc-900 group-hover:text-indigo-600">{survey.title}</p>
+                <p className="text-xs text-zinc-500 line-clamp-1">{survey.description}</p>
+              </button>
+            ))}
+            <button 
+              onClick={() => setMatchingSurveys([])}
+              className="w-full text-zinc-500 text-sm font-bold mt-4"
+            >
+              Back to Login
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-sm font-bold text-zinc-700 mb-1">Username</label>
+              <input 
+                type="text" 
+                required
+                className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-zinc-700 mb-1">Password</label>
+              <input 
+                type="password" 
+                required
+                className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+            {error && <p className="text-red-500 text-sm font-medium">{error}</p>}
+            <button 
+              type="submit"
+              disabled={loading}
+              className="w-full bg-indigo-600 text-white font-bold py-4 rounded-2xl hover:bg-indigo-700 active:scale-[0.98] transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-2"
+            >
+              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ChevronRight className="w-5 h-5" />}
+              {loading ? 'Logging in...' : 'Login to Survey'}
+            </button>
+          </form>
+        )}
+        
+        <div className="mt-8 pt-8 border-t border-zinc-100 text-center">
+          <Link to="/" className="text-zinc-500 text-sm hover:text-indigo-600 font-medium transition-colors">
+            Back to Home
+          </Link>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
 const LoginPage = () => {
   const [error, setError] = useState('');
   const [loggingIn, setLoggingIn] = useState(false);
@@ -488,6 +636,13 @@ const LoginPage = () => {
         <p className="text-center mt-8 text-zinc-500 text-sm">
           New users will be automatically registered upon their first sign-in.
         </p>
+
+        <div className="mt-8 pt-8 border-t border-zinc-100 text-center">
+          <p className="text-sm text-zinc-500 mb-2">Have a group survey code?</p>
+          <Link to="/group-login" className="text-indigo-600 font-bold hover:underline">
+            Group Survey Login
+          </Link>
+        </div>
       </motion.div>
     </div>
   );
@@ -502,7 +657,10 @@ const AdminDashboard = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showQRModal, setShowQRModal] = useState<any | null>(null);
   const [editingSurvey, setEditingSurvey] = useState<any | null>(null);
-  const [newSurvey, setNewSurvey] = useState({ title: '', description: '', is_public: false, language: 'en' });
+  const [newSurvey, setNewSurvey] = useState({ title: '', description: '', is_public: false, is_group: false, language: 'en' });
+  const [groupUsersFile, setGroupUsersFile] = useState<File | null>(null);
+  const [groupUsers, setGroupUsers] = useState<any[]>([]);
+  const [groupSubmissions, setGroupSubmissions] = useState<any[]>([]);
 
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -513,7 +671,7 @@ const AdminDashboard = () => {
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [view, setView] = useState<'surveys' | 'users'>('surveys');
   const [assignedUserIds, setAssignedUserIds] = useState<number[]>([]);
-  const [activeTab, setActiveTab] = useState<'stats' | 'preview' | 'assignments'>('stats');
+  const [activeTab, setActiveTab] = useState<'stats' | 'preview' | 'assignments' | 'tracking'>('stats');
   const [vizPreferences, setVizPreferences] = useState<Record<number, string>>({});
   const [showAddQuestionModal, setShowAddQuestionModal] = useState(false);
   const [newQuestion, setNewQuestion] = useState({ text: '', type: 'text', options: [''] });
@@ -576,6 +734,36 @@ const AdminDashboard = () => {
     return unsubscribe;
   };
 
+  const fetchGroupUsers = () => {
+    if (!selectedSurvey || !selectedSurvey.is_group) return;
+    const q = query(collection(db, 'surveys', selectedSurvey.id, 'group_users'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setGroupUsers(data);
+    });
+    return unsubscribe;
+  };
+
+  const fetchGroupSubmissions = () => {
+    if (!selectedSurvey || !selectedSurvey.is_group) return;
+    const q = query(collection(db, 'responses'), where('surveyId', '==', selectedSurvey.id));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const rawResponses = snapshot.docs.map(doc => doc.data());
+      // Group by submissionId to see who submitted
+      const submissions: Record<string, any> = {};
+      rawResponses.forEach(resp => {
+        if (resp.groupUsername) {
+          submissions[resp.groupUsername] = {
+            username: resp.groupUsername,
+            submittedAt: resp.submittedAt
+          };
+        }
+      });
+      setGroupSubmissions(Object.values(submissions));
+    });
+    return unsubscribe;
+  };
+
   const fetchStats = () => {
     if (!selectedSurvey) return;
     const q = query(collection(db, 'responses'), where('surveyId', '==', selectedSurvey.id));
@@ -622,11 +810,15 @@ const AdminDashboard = () => {
       const unsubRespondents = fetchRespondents();
       const unsubAssignments = fetchAssignments();
       const unsubStats = fetchStats();
+      const unsubGroupUsers = fetchGroupUsers();
+      const unsubGroupSubmissions = fetchGroupSubmissions();
       return () => {
         unsubQuestions?.();
         unsubRespondents?.();
         unsubAssignments?.();
         unsubStats?.();
+        unsubGroupUsers?.();
+        unsubGroupSubmissions?.();
       };
     }
   }, [selectedSurvey]);
@@ -716,14 +908,41 @@ const AdminDashboard = () => {
   const handleCreateSurvey = async () => {
     if (!auth.currentUser) return;
     try {
-      await addDoc(collection(db, 'surveys'), {
+      const surveyRef = await addDoc(collection(db, 'surveys'), {
         ...newSurvey,
         createdBy: auth.currentUser.uid,
         createdAt: serverTimestamp(),
         isActive: true
       });
+
+      if (newSurvey.is_group && groupUsersFile) {
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          const data = new Uint8Array(e.target?.result as ArrayBuffer);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          const jsonData: any[] = XLSX.utils.sheet_to_json(worksheet);
+
+          const batch = writeBatch(db);
+          jsonData.forEach((row) => {
+            if (row.username && row.password) {
+              const userRef = doc(collection(db, 'surveys', surveyRef.id, 'group_users'));
+              batch.set(userRef, {
+                username: String(row.username),
+                password: String(row.password),
+                createdAt: serverTimestamp()
+              });
+            }
+          });
+          await batch.commit();
+        };
+        reader.readAsArrayBuffer(groupUsersFile);
+      }
+
       setShowCreateModal(false);
-      setNewSurvey({ title: '', description: '', is_public: false, language: 'en' });
+      setNewSurvey({ title: '', description: '', is_public: false, is_group: false, language: 'en' });
+      setGroupUsersFile(null);
     } catch (e) {
       console.error('Failed to create survey:', e);
     }
@@ -1250,6 +1469,7 @@ const AdminDashboard = () => {
                       </span>
                     )}
                   </div>
+                  <p className="text-[10px] font-mono text-zinc-400 mt-1">ID: {survey.id}</p>
                   <div className="flex items-center gap-2">
                     {survey.is_public && (
                       <>
@@ -1388,13 +1608,43 @@ const AdminDashboard = () => {
                     id="is_public"
                     className="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500"
                     checked={newSurvey.is_public}
-                    onChange={(e) => setNewSurvey({ ...newSurvey, is_public: e.target.checked })}
+                    onChange={(e) => setNewSurvey({ ...newSurvey, is_public: e.target.checked, is_group: e.target.checked ? false : newSurvey.is_group })}
                   />
                   <label htmlFor="is_public" className="text-sm font-bold text-zinc-700 cursor-pointer">
                     Public Access
                     <span className="block text-xs font-normal text-zinc-500">Anyone with the link can fill this survey</span>
                   </label>
                 </div>
+                <div className="flex items-center gap-3 p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                  <input 
+                    type="checkbox" 
+                    id="is_group"
+                    className="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500"
+                    checked={newSurvey.is_group}
+                    onChange={(e) => setNewSurvey({ ...newSurvey, is_group: e.target.checked, is_public: e.target.checked ? false : newSurvey.is_public })}
+                  />
+                  <label htmlFor="is_group" className="text-sm font-bold text-zinc-700 cursor-pointer">
+                    Group Survey
+                    <span className="block text-xs font-normal text-zinc-500">Requires specific username and password</span>
+                  </label>
+                </div>
+                {newSurvey.is_group && (
+                  <div>
+                    <label className="block text-sm font-bold text-zinc-700 mb-1">Upload User List (Excel)</label>
+                    <div className="border-2 border-dashed border-zinc-200 rounded-xl p-4 text-center hover:border-indigo-400 transition-colors cursor-pointer relative">
+                      <input 
+                        type="file" 
+                        accept=".xlsx, .xls" 
+                        className="absolute inset-0 opacity-0 cursor-pointer"
+                        onChange={(e) => setGroupUsersFile(e.target.files?.[0] || null)}
+                      />
+                      <FileSpreadsheet className="w-6 h-6 text-zinc-300 mx-auto mb-2" />
+                      <span className="text-xs text-zinc-500 block">
+                        {groupUsersFile ? groupUsersFile.name : 'Select Excel file with username & password columns'}
+                      </span>
+                    </div>
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-bold text-zinc-700 mb-1">Language</label>
                   <select 
@@ -1501,7 +1751,10 @@ const AdminDashboard = () => {
           </button>
           <div>
             <h1 className="text-3xl font-bold text-zinc-900">{selectedSurvey.title}</h1>
-            <p className="text-sm text-zinc-500">Managing survey content and results</p>
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-zinc-500">Managing survey content and results</p>
+              <span className="text-xs font-mono text-zinc-400 bg-zinc-100 px-2 py-0.5 rounded-md">ID: {selectedSurvey.id}</span>
+            </div>
           </div>
         </div>
         <div className="flex bg-zinc-100 p-1 rounded-xl">
@@ -1532,8 +1785,76 @@ const AdminDashboard = () => {
           >
             Assignments
           </button>
+          {selectedSurvey.is_group && (
+            <button 
+              onClick={() => setActiveTab('tracking')}
+              className={cn(
+                "px-6 py-2 rounded-lg text-sm font-bold transition-all",
+                activeTab === 'tracking' ? "bg-white text-indigo-600 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+              )}
+            >
+              Tracking
+            </button>
+          )}
         </div>
       </div>
+
+      {activeTab === 'tracking' && selectedSurvey.is_group && (
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm mb-8"
+        >
+          <div className="flex justify-between items-center mb-8">
+            <h2 className="text-xl font-bold text-zinc-900 flex items-center gap-2">
+              <Users className="w-5 h-5 text-indigo-600" />
+              Group Respondent Tracking
+            </h2>
+            <div className="flex items-center gap-4">
+              <div className="text-right">
+                <p className="text-sm font-bold text-zinc-900">{groupSubmissions.length} / {groupUsers.length}</p>
+                <p className="text-xs text-zinc-500">Submissions</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-zinc-100">
+                  <th className="text-left py-4 px-4 text-xs font-bold text-zinc-400 uppercase tracking-wider">Username</th>
+                  <th className="text-left py-4 px-4 text-xs font-bold text-zinc-400 uppercase tracking-wider">Status</th>
+                  <th className="text-left py-4 px-4 text-xs font-bold text-zinc-400 uppercase tracking-wider">Submitted At</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groupUsers.map((user) => {
+                  const submission = groupSubmissions.find(s => s.username === user.username);
+                  return (
+                    <tr key={user.id} className="border-b border-zinc-50 hover:bg-zinc-50/50 transition-colors">
+                      <td className="py-4 px-4 font-bold text-zinc-900">{user.username}</td>
+                      <td className="py-4 px-4">
+                        {submission ? (
+                          <span className="bg-emerald-50 text-emerald-600 text-xs font-bold px-3 py-1 rounded-full">Completed</span>
+                        ) : (
+                          <span className="bg-amber-50 text-amber-600 text-xs font-bold px-3 py-1 rounded-full">Pending</span>
+                        )}
+                      </td>
+                      <td className="py-4 px-4 text-sm text-zinc-500">
+                        {submission?.submittedAt ? (
+                          new Date(submission.submittedAt.toDate()).toLocaleString()
+                        ) : (
+                          '-'
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </motion.div>
+      )}
 
       {activeTab === 'assignments' && (
         <motion.div 
@@ -1596,7 +1917,7 @@ const AdminDashboard = () => {
         </motion.div>
       )}
 
-      {activeTab === 'stats' ? (
+      {activeTab === 'stats' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Upload Section */}
           <div className="lg:col-span-1 space-y-6">
@@ -1864,7 +2185,9 @@ const AdminDashboard = () => {
             </div>
           </div>
         </div>
-      ) : (
+      )}
+
+      {activeTab === 'preview' && (
         <div className={cn("bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm min-h-[600px]", isRTL && "font-dhivehi")} dir={isRTL ? 'rtl' : 'ltr'}>
           <div className={cn("flex justify-between items-center mb-8", isRTL && "flex-row-reverse")}>
             <h2 className={cn("text-xl font-bold text-zinc-900 flex items-center gap-2", isRTL && "flex-row-reverse")}>
@@ -2549,12 +2872,38 @@ const PublicSurvey = () => {
   const [loading, setLoading] = useState(true);
   const [history, setHistory] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
+  
+  // Group login states
+  const [isGroupLoggedIn, setIsGroupLoggedIn] = useState(false);
+  const [groupUsername, setGroupUsername] = useState('');
+  const [groupPassword, setGroupPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loggingIn, setLoggingIn] = useState(false);
 
   useEffect(() => {
     if (id) {
+      // Check for session-based group login
+      const sessionAuth = sessionStorage.getItem(`group_auth_${id}`);
+      if (sessionAuth) {
+        try {
+          const { username, password } = JSON.parse(sessionAuth);
+          setGroupUsername(username);
+          setGroupPassword(password);
+          // We'll trigger the login check in fetchSurvey or a separate effect
+        } catch (e) {
+          console.error('Failed to parse session auth:', e);
+        }
+      }
       fetchSurvey();
     }
   }, [id]);
+
+  useEffect(() => {
+    if (survey?.is_group && groupUsername && groupPassword && !isGroupLoggedIn && !loggingIn) {
+      // Auto-login if credentials are provided via session
+      handleGroupLogin(new Event('submit') as any);
+    }
+  }, [survey, groupUsername, groupPassword, isGroupLoggedIn]);
 
   const fetchSurvey = async () => {
     if (!id) return;
@@ -2569,8 +2918,8 @@ const PublicSurvey = () => {
         return;
       }
       
-      if (!surveySnap.exists() || !surveySnap.data().is_public) {
-        throw new Error('Survey not found or not public');
+      if (!surveySnap.exists() || (!surveySnap.data().is_public && !surveySnap.data().is_group)) {
+        throw new Error('Survey not found or not accessible');
       }
       
       setSurvey({ id: surveySnap.id, ...surveySnap.data() });
@@ -2638,6 +2987,31 @@ const PublicSurvey = () => {
     setCurrentIndex(prevIndex);
   };
 
+  const handleGroupLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!id) return;
+    setLoggingIn(true);
+    setLoginError('');
+    try {
+      const q = query(
+        collection(db, 'surveys', id, 'group_users'),
+        where('username', '==', groupUsername),
+        where('password', '==', groupPassword)
+      );
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        setIsGroupLoggedIn(true);
+      } else {
+        setLoginError('Invalid username or password');
+      }
+    } catch (e) {
+      console.error('Login failed:', e);
+      setLoginError('An error occurred during login');
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
   const handleSubmit = async () => {
     if (!answers[currentQuestion.id]) {
       alert('Please answer the final question before submitting.');
@@ -2653,7 +3027,8 @@ const PublicSurvey = () => {
       reachedQuestionIds.forEach(qId => {
         const respRef = doc(collection(db, 'responses'));
         batch.set(respRef, {
-          userId: null, // Public submission
+          userId: null, // Public or Group submission
+          groupUsername: survey.is_group ? groupUsername : null,
           submissionId,
           surveyId: id,
           questionId: qId,
@@ -2725,6 +3100,60 @@ const PublicSurvey = () => {
      currentQuestion.options.find((o: any) => o.text === answers[currentQuestion.id])?.nextQuestionOrder >= questions.length);
 
   const isRTL = survey?.language === 'dv';
+
+  if (survey?.is_group && !isGroupLoggedIn) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-zinc-50 p-4">
+        <motion.div 
+          initial={{ scale: 0.9, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className="bg-white w-full max-w-md p-8 rounded-3xl shadow-2xl border border-zinc-200"
+        >
+          <div className="flex items-center gap-3 mb-8 justify-center">
+            <div className="bg-indigo-600 p-2 rounded-lg">
+              <BarChart3 className="text-white w-6 h-6" />
+            </div>
+            <span className="text-lg font-black text-zinc-900 tracking-tight uppercase">Survey Master Pro</span>
+          </div>
+          
+          <h2 className="text-2xl font-bold text-zinc-900 mb-2 text-center">{survey.title}</h2>
+          <p className="text-zinc-500 text-center mb-8">Please enter your credentials to access this survey.</p>
+          
+          <form onSubmit={handleGroupLogin} className="space-y-4">
+            <div>
+              <label className="block text-sm font-bold text-zinc-700 mb-1">Username</label>
+              <input 
+                type="text" 
+                required
+                className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                value={groupUsername}
+                onChange={(e) => setGroupUsername(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-zinc-700 mb-1">Password</label>
+              <input 
+                type="password" 
+                required
+                className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                value={groupPassword}
+                onChange={(e) => setGroupPassword(e.target.value)}
+              />
+            </div>
+            {loginError && <p className="text-red-500 text-sm font-medium">{loginError}</p>}
+            <button 
+              type="submit"
+              disabled={loggingIn}
+              className="w-full bg-indigo-600 text-white font-bold py-4 rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-2"
+            >
+              {loggingIn ? <Loader2 className="w-5 h-5 animate-spin" /> : <Globe className="w-5 h-5" />}
+              Access Survey
+            </button>
+          </form>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className={cn("min-h-screen bg-zinc-50 py-12 px-4", isRTL && "font-dhivehi")} dir={isRTL ? 'rtl' : 'ltr'}>
@@ -2918,6 +3347,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<LandingPage />} />
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/group-login" element={<GroupLogin />} />
             <Route path="/public/survey/:id" element={<PublicSurvey />} />
             <Route 
               path="/admin" 
