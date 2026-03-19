@@ -1175,13 +1175,22 @@ const AdminDashboard = () => {
       Data:
       ${statsSummary}`;
 
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error('GEMINI_API_KEY is not defined in environment variables.');
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: prompt,
       });
 
-      let aiAnalysis = response.text || "Failed to generate analysis.";
+      if (!response || !response.text) {
+        throw new Error('Invalid response from AI model.');
+      }
+
+      let aiAnalysis = response.text;
       // Remove any remaining * or # symbols
       aiAnalysis = aiAnalysis.replace(/[*#]/g, '');
 
@@ -1256,9 +1265,9 @@ const AdminDashboard = () => {
       const blob = await Packer.toBlob(doc);
       saveAs(blob, `${selectedSurvey.title.replace(/\s+/g, '_')}_Analysis_Report.docx`);
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to generate report:', error);
-      alert('Failed to generate AI report. Please try again.');
+      alert(`Failed to generate AI report: ${error.message || 'Unknown error'}`);
     } finally {
       setGeneratingReport(false);
     }
