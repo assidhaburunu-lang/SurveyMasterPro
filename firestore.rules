@@ -179,5 +179,9 @@ service cloud.firestore {
       allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
       allow write: if isAdmin();
     }
+
+    match /settings/{settingId} {
+      allow read, write: if isAdmin();
+    }
   }
 }

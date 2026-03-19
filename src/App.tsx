@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { BrowserRouter, Routes, Route, Navigate, Link, useNavigate, useParams, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
+  Key,
   Upload, 
   LogOut, 
   ClipboardList, 
@@ -677,9 +678,11 @@ const AdminDashboard = () => {
   const [questions, setQuestions] = useState<any[]>([]);
   const [respondents, setRespondents] = useState<any[]>([]);
   const [allUsers, setAllUsers] = useState<any[]>([]);
-  const [view, setView] = useState<'surveys' | 'users'>('surveys');
+  const [view, setView] = useState<'surveys' | 'users' | 'settings'>('surveys');
   const [assignedUserIds, setAssignedUserIds] = useState<number[]>([]);
-  const [activeTab, setActiveTab] = useState<'stats' | 'preview' | 'assignments' | 'tracking'>('stats');
+  const [activeTab, setActiveTab] = useState<'stats' | 'preview' | 'assignments' | 'tracking' | 'settings'>('stats');
+  const [settings, setSettings] = useState<Record<string, any>>({});
+  const [editingSettings, setEditingSettings] = useState(false);
   const [vizPreferences, setVizPreferences] = useState<Record<number, string>>({});
   const [showAddQuestionModal, setShowAddQuestionModal] = useState(false);
   const [newQuestion, setNewQuestion] = useState({ text: '', type: 'text', options: [''], required: true });
@@ -817,12 +820,27 @@ const AdminDashboard = () => {
     return unsubscribe;
   };
 
+  const fetchSettings = () => {
+    const q = query(collection(db, 'settings'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data: Record<string, any> = {};
+      snapshot.docs.forEach(doc => {
+        const d = doc.data();
+        data[d.key] = d.value;
+      });
+      setSettings(data);
+    });
+    return unsubscribe;
+  };
+
   useEffect(() => {
     const unsubSurveys = fetchSurveys();
     const unsubAllUsers = fetchAllUsers();
+    const unsubSettings = fetchSettings();
     return () => {
       unsubSurveys();
       unsubAllUsers();
+      unsubSettings();
     };
   }, []);
 
@@ -1091,6 +1109,26 @@ const AdminDashboard = () => {
     });
   };
 
+  const handleUpdateSetting = async (key: string, value: string) => {
+    try {
+      const q = query(collection(db, 'settings'), where('key', '==', key));
+      const snap = await getDocs(q);
+      if (snap.empty) {
+        await addDoc(collection(db, 'settings'), {
+          key,
+          value,
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        await updateDoc(snap.docs[0].ref, {
+          value,
+          updatedAt: serverTimestamp()
+        });
+      }
+    } catch (e) {
+      console.error('Failed to update setting:', e);
+    }
+  };
   const handleEditSurvey = (survey: any) => {
     setEditingSurvey(survey);
     setNewSurvey({ 
@@ -1175,9 +1213,9 @@ const AdminDashboard = () => {
       Data:
       ${statsSummary}`;
 
-      const apiKey = process.env.GEMINI_API_KEY;
+      const apiKey = settings.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
       if (!apiKey) {
-        throw new Error('GEMINI_API_KEY is not defined in environment variables.');
+        throw new Error('GEMINI_API_KEY is not defined in settings or environment variables.');
       }
 
       const ai = new GoogleGenAI({ apiKey });
@@ -1589,6 +1627,15 @@ const AdminDashboard = () => {
               >
                 Users
               </button>
+              <button 
+                onClick={() => setView('settings')}
+                className={cn(
+                  "px-4 py-2 rounded-lg font-bold text-sm transition-all",
+                  view === 'settings' ? "bg-white text-indigo-600 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+                )}
+              >
+                Settings
+              </button>
             </div>
           </div>
           {view === 'surveys' && (
@@ -1602,7 +1649,70 @@ const AdminDashboard = () => {
           )}
         </div>
 
-        {view === 'surveys' ? (
+        {view === 'settings' ? (
+          <div className="bg-white rounded-3xl border border-zinc-200 p-8 shadow-sm">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h2 className="text-2xl font-bold text-zinc-900">Application Settings</h2>
+                <p className="text-sm text-zinc-500">Configure global application parameters</p>
+              </div>
+              <button 
+                onClick={() => setEditingSettings(!editingSettings)}
+                className="bg-indigo-50 text-indigo-600 px-4 py-2 rounded-xl font-bold hover:bg-indigo-100 transition-all"
+              >
+                {editingSettings ? 'Cancel' : 'Edit Settings'}
+              </button>
+            </div>
+
+            <div className="space-y-6 max-w-2xl">
+              <div className="p-6 bg-zinc-50 rounded-2xl border border-zinc-100">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-indigo-100 p-2 rounded-lg">
+                      <Key className="text-indigo-600 w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-zinc-900">Gemini API Key</h3>
+                      <p className="text-xs text-zinc-500">Used for AI report generation</p>
+                    </div>
+                  </div>
+                </div>
+                
+                {editingSettings ? (
+                  <div className="flex gap-3">
+                    <input 
+                      type="password" 
+                      className="flex-1 px-4 py-2 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                      placeholder="Enter Gemini API Key"
+                      value={settings.GEMINI_API_KEY || ''}
+                      onChange={(e) => setSettings({ ...settings, GEMINI_API_KEY: e.target.value })}
+                    />
+                    <button 
+                      onClick={() => {
+                        handleUpdateSetting('GEMINI_API_KEY', settings.GEMINI_API_KEY);
+                        setEditingSettings(false);
+                      }}
+                      className="bg-indigo-600 text-white px-6 py-2 rounded-xl font-bold hover:bg-indigo-700 transition-all"
+                    >
+                      Save
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between bg-white p-4 rounded-xl border border-zinc-200">
+                    <span className="font-mono text-sm text-zinc-400">
+                      {settings.GEMINI_API_KEY ? '••••••••••••••••' : 'Not configured'}
+                    </span>
+                    {settings.GEMINI_API_KEY && (
+                      <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full uppercase">
+                        Configured
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : view === 'surveys' ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {surveys.map((survey) => (
               <div key={survey.id} className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm hover:shadow-md transition-all group">

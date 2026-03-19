@@ -76,6 +76,17 @@
         "assignedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "surveyId", "assignedAt"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "Application settings",
+      "type": "object",
+      "properties": {
+        "key": { "type": "string" },
+        "value": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["key", "value", "updatedAt"]
     }
   },
   "firestore": {
@@ -84,6 +95,7 @@
     "questions": { "schema": "Question", "description": "Questions for surveys" },
     "options": { "schema": "Option", "description": "Options for MCQ questions" },
     "responses": { "schema": "Response", "description": "User survey responses" },
-    "assignments": { "schema": "Assignment", "description": "Survey assignments to users" }
+    "assignments": { "schema": "Assignment", "description": "Survey assignments to users" },
+    "settings": { "schema": "Setting", "description": "Application settings" }
   }
 }
