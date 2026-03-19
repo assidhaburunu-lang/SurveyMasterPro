@@ -40,6 +40,7 @@ service cloud.firestore {
     // Fields:
     //   - userId: string
     //   - enumeratorUsername: string
+    //   - groupUsername: string
     //   - submissionId: string
     //   - surveyId: string
     //   - questionId: string
@@ -65,7 +66,7 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() &&
         (
-          (request.auth.token.email == "rannamaari@gmail.com" && request.auth.token.email_verified == true) ||
+          request.auth.token.email == "rannamaari@gmail.com" ||
           (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
         );
     }
@@ -99,7 +100,12 @@ service cloud.firestore {
 
     function isValidResponse(data) {
       return hasOnlyAllowedFields(['userId', 'enumeratorUsername', 'submissionId', 'surveyId', 'questionId', 'answer', 'submittedAt', 'groupUsername']) &&
-             data.answer is string && data.answer.size() < 5000;
+             (data.userId == null || data.userId is string) &&
+             (data.enumeratorUsername == null || data.enumeratorUsername is string) &&
+             (data.groupUsername == null || data.groupUsername is string) &&
+             data.answer is string && data.answer.size() < 5000 &&
+             data.surveyId is string && data.questionId is string && data.submissionId is string &&
+             data.submittedAt is timestamp;
     }
 
     function isValidQuestion(data) {
@@ -121,7 +127,8 @@ service cloud.firestore {
 
     match /surveys/{surveyId} {
       allow read: if isAuthenticated() || resource.data.is_public == true || resource.data.is_enumerator == true || resource.data.is_group == true;
-      allow write: if isAdmin();
+      allow create, update: if isAdmin() && isValidSurvey(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /surveys/{surveyId}/enumerator_users/{userId} {
@@ -143,11 +150,9 @@ service cloud.firestore {
     }
 
     match /questions/{questionId} {
-      allow read: if isAuthenticated() || 
-                    get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_public == true ||
-                    get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_enumerator == true ||
-                    get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_group == true;
-      allow write: if isAdmin() && isValidQuestion(request.resource.data);
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidQuestion(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /options/{optionId} {
@@ -156,11 +161,17 @@ service cloud.firestore {
     }
 
     match /responses/{responseId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
-      allow create: if (isAuthenticated() && request.resource.data.userId == request.auth.uid) || 
-                    (get(/databases/$(database)/documents/surveys/$(request.resource.data.surveyId)).data.is_public == true) ||
-                    (get(/databases/$(database)/documents/surveys/$(request.resource.data.surveyId)).data.is_enumerator == true) ||
-                    (get(/databases/$(database)/documents/surveys/$(request.resource.data.surveyId)).data.is_group == true);
+      allow read: if isAdmin() || 
+                  (isAuthenticated() && resource.data.userId == request.auth.uid) ||
+                  (get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_public == true) ||
+                  (get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_enumerator == true) ||
+                  (get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_group == true);
+      allow create: if isValidResponse(request.resource.data) && (
+                      (isAuthenticated() && request.resource.data.userId == request.auth.uid) || 
+                      (get(/databases/$(database)/documents/surveys/$(request.resource.data.surveyId)).data.is_public == true) ||
+                      (get(/databases/$(database)/documents/surveys/$(request.resource.data.surveyId)).data.is_enumerator == true) ||
+                      (get(/databases/$(database)/documents/surveys/$(request.resource.data.surveyId)).data.is_group == true)
+                    );
       allow update, delete: if isAdmin();
     }
 

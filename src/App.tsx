@@ -995,37 +995,95 @@ const AdminDashboard = () => {
     setConfirmModal({
       show: true,
       title: isRTL ? 'ސާވޭ ފޮހެލުން' : 'Delete Survey',
-      message: isRTL ? 'މި ސާވޭ ފޮހެލަން ބޭނުންތަ؟' : 'Are you sure you want to delete this survey and all its data?',
+      message: isRTL ? 'މި ސާވޭ ފޮހެލަން ބޭނުންތަ؟' : 'Are you sure you want delete this survey?',
       onConfirm: async () => {
+        setConfirmModal(null);
         try {
-          const batch = writeBatch(db);
+          const deleteRefs: any[] = [];
           
-          // Delete questions and options
+          // Collect questions and options
           const qQ = query(collection(db, 'questions'), where('surveyId', '==', id));
-          const qSnap = await getDocs(qQ);
+          let qSnap;
+          try {
+            qSnap = await getDocs(qQ);
+          } catch (e) {
+            handleFirestoreError(e, OperationType.GET, 'questions');
+            return;
+          }
+
           for (const qDoc of qSnap.docs) {
             const optQ = query(collection(db, 'options'), where('questionId', '==', qDoc.id));
-            const optSnap = await getDocs(optQ);
-            optSnap.docs.forEach(oDoc => batch.delete(oDoc.ref));
-            batch.delete(qDoc.ref);
+            let optSnap;
+            try {
+              optSnap = await getDocs(optQ);
+            } catch (e) {
+              handleFirestoreError(e, OperationType.GET, 'options');
+              return;
+            }
+            optSnap.docs.forEach(oDoc => deleteRefs.push(oDoc.ref));
+            deleteRefs.push(qDoc.ref);
           }
           
-          // Delete assignments
+          // Collect assignments
           const assignQ = query(collection(db, 'assignments'), where('surveyId', '==', id));
-          const assignSnap = await getDocs(assignQ);
-          assignSnap.docs.forEach(aDoc => batch.delete(aDoc.ref));
+          let assignSnap;
+          try {
+            assignSnap = await getDocs(assignQ);
+          } catch (e) {
+            handleFirestoreError(e, OperationType.GET, 'assignments');
+            return;
+          }
+          assignSnap.docs.forEach(aDoc => deleteRefs.push(aDoc.ref));
           
-          // Delete responses
+          // Collect responses
           const respQ = query(collection(db, 'responses'), where('surveyId', '==', id));
-          const respSnap = await getDocs(respQ);
-          respSnap.docs.forEach(rDoc => batch.delete(rDoc.ref));
+          let respSnap;
+          try {
+            respSnap = await getDocs(respQ);
+          } catch (e) {
+            handleFirestoreError(e, OperationType.GET, 'responses');
+            return;
+          }
+          respSnap.docs.forEach(rDoc => deleteRefs.push(rDoc.ref));
           
-          // Delete survey
-          batch.delete(doc(db, 'surveys', id));
+          // Collect subcollections
+          const enumUsersQ = query(collection(db, 'surveys', id, 'enumerator_users'));
+          let enumUsersSnap;
+          try {
+            enumUsersSnap = await getDocs(enumUsersQ);
+          } catch (e) {
+            handleFirestoreError(e, OperationType.GET, `surveys/${id}/enumerator_users`);
+            return;
+          }
+          enumUsersSnap.docs.forEach(eDoc => deleteRefs.push(eDoc.ref));
+
+          const groupUsersQ = query(collection(db, 'surveys', id, 'group_users'));
+          let groupUsersSnap;
+          try {
+            groupUsersSnap = await getDocs(groupUsersQ);
+          } catch (e) {
+            handleFirestoreError(e, OperationType.GET, `surveys/${id}/group_users`);
+            return;
+          }
+          groupUsersSnap.docs.forEach(gDoc => deleteRefs.push(gDoc.ref));
+
+          // Add survey itself
+          deleteRefs.push(doc(db, 'surveys', id));
+
+          // Delete in batches of 500
+          for (let i = 0; i < deleteRefs.length; i += 500) {
+            const batch = writeBatch(db);
+            const chunk = deleteRefs.slice(i, i + 500);
+            chunk.forEach(ref => batch.delete(ref));
+            try {
+              await batch.commit();
+            } catch (e) {
+              handleFirestoreError(e, OperationType.DELETE, 'batch_delete');
+              return;
+            }
+          }
           
-          await batch.commit();
           if (selectedSurvey?.id === id) setSelectedSurvey(null);
-          setConfirmModal(null);
         } catch (e) {
           console.error('Failed to delete survey:', e);
         }
@@ -2393,7 +2451,7 @@ const AdminDashboard = () => {
                         <option value="date">Date</option>
                         <option value="time">Time</option>
                       </select>
-                      <span className="text-xs text-zinc-400 font-mono">#{q.question_order + 1}</span>
+                      <span className="text-xs text-zinc-400 font-mono">#{q.order}</span>
                       <button 
                         onClick={() => handleToggleRequired(q.id, q.required !== false)}
                         className={cn(
@@ -2446,20 +2504,20 @@ const AdminDashboard = () => {
                           <div className={cn("flex items-center gap-2", isRTL && "flex-row-reverse")}>
                             <span className="text-[10px] text-zinc-400 uppercase font-bold">{isRTL ? 'ދާންވީ ސުވާލު:' : 'Jump to:'}</span>
                             <select 
-                              value={opt.next_question_order === null ? 'none' : opt.next_question_order}
+                              value={(opt.nextQuestionOrder === null || isNaN(opt.nextQuestionOrder)) ? 'none' : opt.nextQuestionOrder}
                               onChange={(e) => {
                                 const val = e.target.value === 'none' ? null : parseInt(e.target.value);
-                                handleUpdateJump(opt.id, val);
+                                handleUpdateJump(opt.id, isNaN(val as number) ? null : val);
                               }}
                               className="text-[10px] bg-zinc-50 border border-zinc-200 rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-indigo-500"
                             >
                               <option value="none">{isRTL ? 'ޖެހިގެން އިން ސުވާލު' : 'Next Question'}</option>
                               {questions.map((targetQ) => (
-                                <option key={targetQ.id} value={targetQ.question_order}>
-                                  #{targetQ.question_order + 1}: {targetQ.text.substring(0, 20)}...
+                                <option key={targetQ.id} value={targetQ.order || 0}>
+                                  #{targetQ.order || 0}: {targetQ.text.substring(0, 20)}...
                                 </option>
                               ))}
-                              <option value={questions.length}>End Survey</option>
+                              <option value={questions.length + 1}>End Survey</option>
                             </select>
                           </div>
                         </div>
@@ -2750,11 +2808,11 @@ const RespondentDashboard = () => {
       reachedQuestionIds.forEach(qId => {
         const respRef = doc(collection(db, 'responses'));
         batch.set(respRef, {
-          userId: user?.uid,
+          userId: user?.uid || null,
           submissionId,
           surveyId: selectedSurvey.id,
           questionId: qId,
-          answer: answers[qId],
+          answer: answers[qId] || '',
           submittedAt: serverTimestamp()
         });
       });
@@ -2845,7 +2903,7 @@ const RespondentDashboard = () => {
 
   const isLastQuestion = currentIndex >= questions.length - 1 || 
     (currentQuestion.type === 'mcq' && 
-     currentQuestion.options.find((o: any) => o.text === answers[currentQuestion.id])?.nextQuestionOrder >= questions.length);
+     currentQuestion.options.find((o: any) => o.text === answers[currentQuestion.id])?.nextQuestionOrder > questions.length);
 
   const isRTL = selectedSurvey?.language === 'dv';
 
@@ -3230,10 +3288,11 @@ const PublicSurvey = () => {
         batch.set(respRef, {
           userId: null, // Public or Enumerator submission
           enumeratorUsername: survey.is_enumerator ? enumeratorUsername : null,
+          groupUsername: survey.is_group ? (sessionStorage.getItem(`group_username_${id}`) || null) : null,
           submissionId,
           surveyId: id,
           questionId: qId,
-          answer: answers[qId],
+          answer: answers[qId] || '',
           submittedAt: serverTimestamp()
         });
       });
@@ -3298,7 +3357,7 @@ const PublicSurvey = () => {
 
   const isLastQuestion = currentIndex >= questions.length - 1 || 
     (currentQuestion.type === 'mcq' && 
-     currentQuestion.options.find((o: any) => o.text === answers[currentQuestion.id])?.nextQuestionOrder >= questions.length);
+     currentQuestion.options.find((o: any) => o.text === answers[currentQuestion.id])?.nextQuestionOrder > questions.length);
 
   if (survey?.is_enumerator && !isEnumeratorLoggedIn) {
     return (
