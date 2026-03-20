@@ -1,5 +1,5 @@
 {
   "name": "SurveyMaster Pro",
-  "description": "A comprehensive survey platform where admins can bulk-upload questions from Excel and respondents can securely submit answers.",
+  "description": "A comprehensive survey platform where admins can bulk-upload questions from Excel and surveyors can securely submit answers.",
   "requestFramePermissions": []
 }

@@ -53,6 +53,20 @@ service cloud.firestore {
     //   - surveyId: string
     //   - assignedAt: timestamp
     //
+    // Collection: projects
+    // Fields:
+    //   - name: string
+    //   - description: string
+    //   - createdBy: string
+    //   - createdAt: timestamp
+    //
+    // Collection: project_assignments
+    // Fields:
+    //   - userId: string
+    //   - projectId: string
+    //   - role: string
+    //   - assignedAt: timestamp
+    //
     // ===============================================================
 
     // ===============================================================
@@ -66,13 +80,23 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() &&
         (
-          request.auth.token.email == "rannamaari@gmail.com" ||
+          (request.auth.token.email == "rannamaari@gmail.com" && request.auth.token.email_verified == true) ||
           (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
         );
     }
 
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isProjectMember(projectId) {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/project_assignments/$(request.auth.uid + '_' + projectId));
+    }
+
+    function isSurveyProjectMember(surveyId) {
+      let survey = get(/databases/$(database)/documents/surveys/$(surveyId)).data;
+      return survey.projectId != null && isProjectMember(survey.projectId);
     }
 
     function hasRequiredFields(fields) {
@@ -94,8 +118,18 @@ service cloud.firestore {
     }
 
     function isValidSurvey(data) {
-      return hasOnlyAllowedFields(['title', 'description', 'is_public', 'is_enumerator', 'language', 'createdBy', 'createdAt', 'isActive', 'is_group', 'allow_multiple_submissions']) &&
+      return hasOnlyAllowedFields(['title', 'description', 'is_public', 'is_enumerator', 'language', 'createdBy', 'createdAt', 'isActive', 'is_group', 'allow_multiple_submissions', 'projectId']) &&
              data.title is string && data.title.size() > 0 && data.title.size() < 200;
+    }
+
+    function isValidProject(data) {
+      return hasOnlyAllowedFields(['name', 'description', 'createdBy', 'createdAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 200;
+    }
+
+    function isValidProjectAssignment(data) {
+      return hasOnlyAllowedFields(['userId', 'projectId', 'role', 'assignedAt']) &&
+             data.userId is string && data.projectId is string && data.role in ['member', 'manager'];
     }
 
     function isValidResponse(data) {
@@ -127,7 +161,20 @@ service cloud.firestore {
 
     match /surveys/{surveyId} {
       allow read: if isAuthenticated() || resource.data.is_public == true || resource.data.is_enumerator == true || resource.data.is_group == true;
-      allow create, update: if isAdmin() && isValidSurvey(request.resource.data);
+      allow create: if (isAdmin() || (isAuthenticated() && request.resource.data.projectId != null && isProjectMember(request.resource.data.projectId))) && isValidSurvey(request.resource.data);
+      allow update: if (isAdmin() || (isAuthenticated() && resource.data.projectId != null && isProjectMember(resource.data.projectId))) && isValidSurvey(request.resource.data);
+      allow delete: if isAdmin() || (isAuthenticated() && resource.data.projectId != null && isProjectMember(resource.data.projectId));
+    }
+
+    match /projects/{projectId} {
+      allow read: if isAdmin() || isProjectMember(projectId);
+      allow create, update: if isAdmin() && isValidProject(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /project_assignments/{assignmentId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create, update: if isAdmin() && isValidProjectAssignment(request.resource.data);
       allow delete: if isAdmin();
     }
 
@@ -151,13 +198,13 @@ service cloud.firestore {
 
     match /questions/{questionId} {
       allow read: if true;
-      allow create, update: if isAdmin() && isValidQuestion(request.resource.data);
-      allow delete: if isAdmin();
+      allow create, update: if (isAdmin() || isSurveyProjectMember(request.resource.data.surveyId)) && isValidQuestion(request.resource.data);
+      allow delete: if isAdmin() || isSurveyProjectMember(resource.data.surveyId);
     }
 
     match /options/{optionId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if isAdmin() || isSurveyProjectMember(get(/databases/$(database)/documents/questions/$(request.resource.data.questionId)).data.surveyId);
     }
 
     match /responses/{responseId} {

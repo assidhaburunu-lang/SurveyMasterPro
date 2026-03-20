@@ -652,7 +652,7 @@ const LoginPage = () => {
 
 
 const AdminDashboard = () => {
-  const { token } = useAuth();
+  const { user } = useAuth();
   const [surveys, setSurveys] = useState<any[]>([]);
   const [selectedSurvey, setSelectedSurvey] = useState<any | null>(null);
   const isRTL = selectedSurvey?.language === 'dv';
@@ -2539,6 +2539,13 @@ const AdminDashboard = () => {
               >
                 Refresh Questions
               </button>
+              <button 
+                onClick={() => window.open(`/public/survey/${selectedSurvey.id}?preview=true`, '_blank')}
+                className="text-sm font-semibold text-indigo-600 hover:text-indigo-700 flex items-center gap-1.5"
+              >
+                <Globe className="w-4 h-4" />
+                Preview Survey
+              </button>
             </div>
           </div>
 
@@ -3225,6 +3232,9 @@ const RespondentDashboard = () => {
 
 const PublicSurvey = () => {
   const { id } = useParams();
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  const isPreview = searchParams.get('preview') === 'true';
   const [survey, setSurvey] = useState<any | null>(null);
   const [questions, setQuestions] = useState<any[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -3241,9 +3251,10 @@ const PublicSurvey = () => {
   const [enumeratorPassword, setEnumeratorPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loggingIn, setLoggingIn] = useState(false);
+  const { user, loading: authLoading } = useAuth();
 
   useEffect(() => {
-    if (id) {
+    if (id && !authLoading) {
       // Check for session-based enumerator login
       const sessionAuth = sessionStorage.getItem(`enumerator_auth_${id}`);
       if (sessionAuth) {
@@ -3258,7 +3269,7 @@ const PublicSurvey = () => {
       }
       fetchSurvey();
     }
-  }, [id]);
+  }, [id, authLoading]);
 
   useEffect(() => {
     if (survey?.is_enumerator && enumeratorUsername && enumeratorPassword && !isEnumeratorLoggedIn && !loggingIn) {
@@ -3280,7 +3291,7 @@ const PublicSurvey = () => {
         return;
       }
       
-      if (!surveySnap.exists() || (!surveySnap.data().is_public && !surveySnap.data().is_enumerator)) {
+      if (!surveySnap.exists() || (!surveySnap.data().is_public && !surveySnap.data().is_enumerator && !surveySnap.data().is_group && !isPreview)) {
         throw new Error('Survey not found or not accessible');
       }
       
@@ -3381,6 +3392,15 @@ const PublicSurvey = () => {
       return;
     }
 
+    if (isPreview) {
+      setSubmitting(true);
+      setTimeout(() => {
+        setSubmitted(true);
+        setSubmitting(false);
+      }, 500);
+      return;
+    }
+
     setSubmitting(true);
     try {
       if (survey.is_enumerator && !survey.allow_multiple_submissions) {
@@ -3478,7 +3498,7 @@ const PublicSurvey = () => {
     (currentQuestion.type === 'mcq' && 
      currentQuestion.options.find((o: any) => o.text === answers[currentQuestion.id])?.nextQuestionOrder > questions.length);
 
-  if (survey?.is_enumerator && !isEnumeratorLoggedIn) {
+  if (survey?.is_enumerator && !isEnumeratorLoggedIn && !isPreview) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-zinc-50 p-4">
         <motion.div 
@@ -3534,7 +3554,12 @@ const PublicSurvey = () => {
 
   return (
     <div className={cn("min-h-screen bg-zinc-50 py-12 px-4", isRTL && "font-dhivehi")} dir={isRTL ? 'rtl' : 'ltr'}>
-      <div className="max-w-3xl mx-auto">
+      {isPreview && (
+        <div className="fixed top-0 left-0 right-0 bg-amber-500 text-white text-center py-2 font-bold z-50 shadow-md">
+          Preview Mode - Data will not be saved
+        </div>
+      )}
+      <div className={cn("max-w-3xl mx-auto", isPreview && "mt-8")}>
         <div className="flex items-center gap-3 mb-10">
           <div className="bg-indigo-600 p-1.5 rounded-lg">
             <BarChart3 className="text-white w-5 h-5" />

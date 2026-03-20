@@ -23,10 +23,35 @@
         "is_enumerator": { "type": "boolean" },
         "allow_multiple_submissions": { "type": "boolean" },
         "language": { "type": "string" },
+        "projectId": { "type": "string" },
         "createdBy": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["title", "createdBy", "createdAt"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "A project that can contain multiple surveys",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "createdBy", "createdAt"]
+    },
+    "ProjectAssignment": {
+      "title": "ProjectAssignment",
+      "description": "Mapping of a user to a project",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "projectId": { "type": "string" },
+        "role": { "type": "string", "enum": ["member", "manager"] },
+        "assignedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "projectId", "assignedAt"]
     },
     "Question": {
       "title": "Question",
@@ -96,6 +121,8 @@
     "options": { "schema": "Option", "description": "Options for MCQ questions" },
     "responses": { "schema": "Response", "description": "User survey responses" },
     "assignments": { "schema": "Assignment", "description": "Survey assignments to users" },
+    "projects": { "schema": "Project", "description": "Project definitions" },
+    "project_assignments": { "schema": "ProjectAssignment", "description": "Project assignments to users" },
     "settings": { "schema": "Setting", "description": "Application settings" }
   }
 }
