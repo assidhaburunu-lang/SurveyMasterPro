@@ -143,8 +143,14 @@ service cloud.firestore {
     }
 
     function isValidQuestion(data) {
-      return hasOnlyAllowedFields(['surveyId', 'text', 'type', 'order', 'required']) &&
+      return hasOnlyAllowedFields(['surveyId', 'text', 'type', 'order', 'required', 'updatedAt']) &&
              data.surveyId is string && data.text is string && data.type is string && data.order is int;
+    }
+
+    function isValidOption(data) {
+      return hasOnlyAllowedFields(['questionId', 'surveyId', 'text', 'nextQuestionOrder']) &&
+             data.questionId is string && data.surveyId is string && data.text is string &&
+             (!('nextQuestionOrder' in data) || data.nextQuestionOrder == null || data.nextQuestionOrder is int);
     }
 
     // ===============================================================
@@ -204,7 +210,8 @@ service cloud.firestore {
 
     match /options/{optionId} {
       allow read: if true;
-      allow write: if isAdmin() || isSurveyProjectMember(get(/databases/$(database)/documents/questions/$(request.resource.data.questionId)).data.surveyId);
+      allow create, update: if (isAdmin() || isSurveyProjectMember(request.resource.data.surveyId)) && isValidOption(request.resource.data);
+      allow delete: if isAdmin() || isSurveyProjectMember(resource.data.surveyId);
     }
 
     match /responses/{responseId} {

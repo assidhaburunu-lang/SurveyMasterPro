@@ -73,9 +73,10 @@
       "properties": {
         "questionId": { "type": "string" },
         "text": { "type": "string" },
-        "nextQuestionOrder": { "type": "integer" }
+        "nextQuestionOrder": { "type": "integer" },
+        "order": { "type": "integer" }
       },
-      "required": ["questionId", "text"]
+      "required": ["questionId", "text", "order"]
     },
     "Response": {
       "title": "Response",

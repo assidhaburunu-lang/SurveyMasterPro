@@ -704,18 +704,33 @@ const AdminDashboard = () => {
   const fetchQuestions = () => {
     if (!selectedSurvey) return;
     const q = query(collection(db, 'questions'), where('surveyId', '==', selectedSurvey.id), orderBy('order', 'asc'));
-    const unsubscribe = onSnapshot(q, async (snapshot) => {
-      const questionsData = await Promise.all(snapshot.docs.map(async (qDoc) => {
-        const qData = qDoc.data();
-        // Fetch options for this question
-        const optQ = query(collection(db, 'options'), where('questionId', '==', qDoc.id));
-        const optSnap = await getDocs(optQ);
-        const options = optSnap.docs.map(oDoc => ({ id: oDoc.id, ...oDoc.data() }));
-        return { id: qDoc.id, ...qData, options };
+    const optQ = query(collection(db, 'options'), where('surveyId', '==', selectedSurvey.id));
+
+    let questionsData: any[] = [];
+    let optionsData: any[] = [];
+
+    const updateState = () => {
+      const combined = questionsData.map(qDoc => ({
+        ...qDoc,
+        options: optionsData.filter(o => o.questionId === qDoc.id)
       }));
-      setQuestions(questionsData);
+      setQuestions(combined);
+    };
+
+    const unsubQuestions = onSnapshot(q, (snapshot) => {
+      questionsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      updateState();
     });
-    return unsubscribe;
+
+    const unsubOptions = onSnapshot(optQ, (snapshot) => {
+      optionsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      updateState();
+    });
+
+    return () => {
+      unsubQuestions();
+      unsubOptions();
+    };
   };
 
   const fetchRespondents = () => {
@@ -866,29 +881,35 @@ const AdminDashboard = () => {
   const handleAddQuestion = async () => {
     if (!selectedSurvey) return;
     try {
-      const qRef = await addDoc(collection(db, 'questions'), {
+      const qRef = doc(collection(db, 'questions'));
+      const batch = writeBatch(db);
+      
+      const questionData = {
         surveyId: selectedSurvey.id,
         text: newQuestion.text,
         type: newQuestion.type,
         order: questions.length + 1,
-        required: newQuestion.required
-      });
+        required: newQuestion.required,
+        updatedAt: serverTimestamp() // Add timestamp to trigger listeners
+      };
+      
+      batch.set(qRef, questionData);
 
       if (newQuestion.type === 'mcq') {
-        const batch = writeBatch(db);
         newQuestion.options.forEach(optText => {
           if (optText.trim()) {
             const optRef = doc(collection(db, 'options'));
             batch.set(optRef, {
               questionId: qRef.id,
+              surveyId: selectedSurvey.id, // Add surveyId for easier fetching
               text: optText.trim(),
               nextQuestionOrder: null
             });
           }
         });
-        await batch.commit();
       }
       
+      await batch.commit();
       setShowAddQuestionModal(false);
       setNewQuestion({ text: '', type: 'mcq', options: [''], required: true });
     } catch (e) {
@@ -1428,8 +1449,14 @@ const AdminDashboard = () => {
       const targetQ = questions[targetIdx];
       
       const batch = writeBatch(db);
-      batch.update(doc(db, 'questions', currentQ.id), { order: targetQ.order });
-      batch.update(doc(db, 'questions', targetQ.id), { order: currentQ.order });
+      batch.update(doc(db, 'questions', currentQ.id), { 
+        order: targetQ.order,
+        updatedAt: serverTimestamp()
+      });
+      batch.update(doc(db, 'questions', targetQ.id), { 
+        order: currentQ.order,
+        updatedAt: serverTimestamp()
+      });
       
       await batch.commit();
     } catch (e) {
@@ -1438,9 +1465,13 @@ const AdminDashboard = () => {
   };
 
   const handleUpdateQuestionType = async (id: string, newType: string) => {
+    if (!selectedSurvey) return;
     try {
       const batch = writeBatch(db);
-      batch.update(doc(db, 'questions', id), { type: newType });
+      batch.update(doc(db, 'questions', id), { 
+        type: newType,
+        updatedAt: serverTimestamp()
+      });
       
       if (newType !== 'mcq') {
         // Delete options if not MCQ
@@ -1455,6 +1486,7 @@ const AdminDashboard = () => {
           const optRef = doc(collection(db, 'options'));
           batch.set(optRef, {
             questionId: id,
+            surveyId: selectedSurvey.id,
             text: 'Option 1',
             nextQuestionOrder: null
           });
@@ -1469,7 +1501,10 @@ const AdminDashboard = () => {
 
   const handleToggleRequired = async (id: string, currentRequired: boolean) => {
     try {
-      await updateDoc(doc(db, 'questions', id), { required: !currentRequired });
+      await updateDoc(doc(db, 'questions', id), { 
+        required: !currentRequired,
+        updatedAt: serverTimestamp()
+      });
     } catch (e) {
       console.error('Failed to toggle required status:', e);
     }
@@ -1550,7 +1585,8 @@ const AdminDashboard = () => {
             text: q.text,
             type: q.type,
             order: i + 1,
-            required: q.required
+            required: q.required,
+            updatedAt: serverTimestamp()
           });
 
           if (q.type === 'mcq' && q.options) {
@@ -1566,6 +1602,7 @@ const AdminDashboard = () => {
               const optRef = doc(collection(db, 'options'));
               batch.set(optRef, {
                 questionId: qRef.id,
+                surveyId: selectedSurvey.id,
                 text: text,
                 nextQuestionOrder: nextOrder
               });
@@ -2869,13 +2906,19 @@ const RespondentDashboard = () => {
     try {
       const q = query(collection(db, 'questions'), where('surveyId', '==', surveyId), orderBy('order', 'asc'));
       const snap = await getDocs(q);
-      const questionsData = await Promise.all(snap.docs.map(async (qDoc) => {
+      
+      const optQ = query(collection(db, 'options'), where('surveyId', '==', surveyId));
+      const optSnap = await getDocs(optQ);
+      const allOptions = optSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      const questionsData = snap.docs.map(qDoc => {
         const qData = qDoc.data();
-        const optQ = query(collection(db, 'options'), where('questionId', '==', qDoc.id));
-        const optSnap = await getDocs(optQ);
-        const options = optSnap.docs.map(oDoc => ({ id: oDoc.id, ...oDoc.data() }));
-        return { id: qDoc.id, ...qData, options };
-      }));
+        return {
+          id: qDoc.id,
+          ...qData,
+          options: allOptions.filter((o: any) => o.questionId === qDoc.id)
+        };
+      });
       setQuestions(questionsData);
     } finally {
       setLoading(false);
@@ -3304,19 +3347,24 @@ const PublicSurvey = () => {
         return;
       }
 
-      const questionsData = await Promise.all(qSnap.docs.map(async (qDoc) => {
+      const optQ = query(collection(db, 'options'), where('surveyId', '==', id));
+      let optSnap;
+      try {
+        optSnap = await getDocs(optQ);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.LIST, 'options');
+        return;
+      }
+      const allOptions = optSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      const questionsData = qSnap.docs.map(qDoc => {
         const qData = qDoc.data();
-        const optQ = query(collection(db, 'options'), where('questionId', '==', qDoc.id));
-        let optSnap;
-        try {
-          optSnap = await getDocs(optQ);
-        } catch (e) {
-          handleFirestoreError(e, OperationType.LIST, 'options');
-          return { id: qDoc.id, ...qData, options: [] };
-        }
-        const options = optSnap.docs.map(oDoc => ({ id: oDoc.id, ...oDoc.data() }));
-        return { id: qDoc.id, ...qData, options };
-      }));
+        return {
+          id: qDoc.id,
+          ...qData,
+          options: allOptions.filter((o: any) => o.questionId === qDoc.id)
+        };
+      });
       setQuestions(questionsData);
     } catch (e: any) {
       if (e.message.startsWith('{')) {
