@@ -344,7 +344,7 @@ const LandingPage = () => {
           <div className="absolute -inset-4 bg-indigo-600/5 rounded-[40px] blur-3xl" />
           <div className="relative bg-white rounded-[40px] border border-zinc-100 shadow-2xl overflow-hidden aspect-video lg:aspect-square">
             <img 
-              src="https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=1200&q=80" 
+              src="/SMP-logo.png" 
               alt="Survey Master Pro Research Analytics" 
               className="w-full h-full object-cover"
               referrerPolicy="no-referrer"
@@ -1731,7 +1731,6 @@ const AdminDashboard = () => {
                       </span>
                     )}
                   </div>
-                  <p className="text-[10px] font-mono text-zinc-400 mt-1">ID: {survey.id}</p>
                   <div className="flex items-center gap-2">
                     {survey.is_public && (
                       <>
@@ -2030,7 +2029,6 @@ const AdminDashboard = () => {
             <h1 className="text-3xl font-bold text-zinc-900">{selectedSurvey.title}</h1>
             <div className="flex items-center gap-2">
               <p className="text-sm text-zinc-500">Managing survey content and results</p>
-              <span className="text-xs font-mono text-zinc-400 bg-zinc-100 px-2 py-0.5 rounded-md">ID: {selectedSurvey.id}</span>
             </div>
           </div>
         </div>
