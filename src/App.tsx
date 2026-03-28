@@ -1436,6 +1436,38 @@ const AdminDashboard = () => {
     });
   };
 
+  const handleClearResponses = async () => {
+    setConfirmModal({
+      show: true,
+      title: isRTL ? 'ހުރިހާ ޖަވާބުތައް ފޮހެލުން' : 'Clear All Responses',
+      message: isRTL ? 'މި ސަރވޭގެ ހުރިހާ ޖަވާބުތައް ފޮހެލަން ބޭނުންތަ؟' : 'Are you sure you want to delete ALL responses for this survey? This cannot be undone.',
+      onConfirm: async () => {
+        if (!selectedSurvey) return;
+        try {
+          const respQ = query(collection(db, 'responses'), where('surveyId', '==', selectedSurvey.id));
+          const snap = await getDocs(respQ);
+          
+          // Delete in chunks of 500
+          const chunks = [];
+          for (let i = 0; i < snap.docs.length; i += 500) {
+            chunks.push(snap.docs.slice(i, i + 500));
+          }
+          
+          for (const chunk of chunks) {
+            const batch = writeBatch(db);
+            chunk.forEach(doc => batch.delete(doc.ref));
+            await batch.commit();
+          }
+          
+          setStats([]);
+          setConfirmModal(null);
+        } catch (e) {
+          console.error('Failed to clear responses:', e);
+        }
+      }
+    });
+  };
+
   const handleReorderQuestion = async (id: string, direction: 'up' | 'down') => {
     if (!selectedSurvey) return;
     try {
@@ -2338,6 +2370,22 @@ const AdminDashboard = () => {
                   </p>
                 </div>
               </div>
+            </div>
+
+            <div className="bg-red-50 p-8 rounded-3xl border border-red-100 shadow-sm">
+              <h2 className="text-xl font-bold text-red-900 mb-6 flex items-center gap-2">
+                <Trash2 className="w-5 h-5 text-red-600" />
+                Danger Zone
+              </h2>
+              <p className="text-sm text-red-700 mb-6">Permanently delete all responses for this survey. This action cannot be undone.</p>
+              <button 
+                onClick={handleClearResponses}
+                disabled={stats.length === 0}
+                className="w-full bg-red-600 text-white font-bold py-4 rounded-2xl hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-red-100 flex items-center justify-center gap-2"
+              >
+                <Trash2 className="w-5 h-5" />
+                Clear All Responses
+              </button>
             </div>
           </div>
 
