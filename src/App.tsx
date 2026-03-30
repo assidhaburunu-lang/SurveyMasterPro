@@ -668,6 +668,8 @@ const AdminDashboard = () => {
     language: 'en' 
   });
   const [enumeratorUsersFile, setEnumeratorUsersFile] = useState<File | null>(null);
+  const [enumeratorUploading, setEnumeratorUploading] = useState(false);
+  const [enumeratorMessage, setEnumeratorMessage] = useState('');
   const [enumeratorUsers, setEnumeratorUsers] = useState<any[]>([]);
   const [enumeratorSubmissions, setEnumeratorSubmissions] = useState<any[]>([]);
 
@@ -1655,6 +1657,65 @@ const AdminDashboard = () => {
     }
   };
 
+  const handleUploadEnumerators = async () => {
+    if (!enumeratorUsersFile || !selectedSurvey) return;
+    setEnumeratorUploading(true);
+    setEnumeratorMessage('');
+    
+    try {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const data = e.target?.result;
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData: any[] = XLSX.utils.sheet_to_json(worksheet);
+        
+        if (jsonData.length === 0) {
+          setEnumeratorMessage('No valid enumerators found.');
+          setEnumeratorUploading(false);
+          return;
+        }
+
+        const batch = writeBatch(db);
+        
+        // Delete existing enumerators for this survey
+        const existingQ = query(collection(db, 'surveys', selectedSurvey.id, 'enumerator_users'));
+        const existingSnap = await getDocs(existingQ);
+        existingSnap.docs.forEach(doc => batch.delete(doc.ref));
+
+        let count = 0;
+        jsonData.forEach((row) => {
+          if (row.username && row.password) {
+            const userRef = doc(collection(db, 'surveys', selectedSurvey.id, 'enumerator_users'));
+            batch.set(userRef, {
+              username: String(row.username),
+              password: String(row.password),
+              createdAt: serverTimestamp()
+            });
+            count++;
+          }
+        });
+
+        if (count === 0) {
+          setEnumeratorMessage('No valid enumerators (username/password) found in file.');
+          setEnumeratorUploading(false);
+          return;
+        }
+
+        await batch.commit();
+        setEnumeratorMessage(`Success! Uploaded ${count} enumerators.`);
+        setEnumeratorUsersFile(null);
+        setEnumeratorUploading(false);
+      };
+      reader.readAsArrayBuffer(enumeratorUsersFile);
+    } catch (e) {
+      console.error(e);
+      setEnumeratorMessage('Upload failed');
+      setEnumeratorUploading(false);
+    }
+  };
+
   const handleToggleUserRole = async (userId: string, currentRole: string) => {
     try {
       const newRole = currentRole === 'admin' ? 'respondent' : 'admin';
@@ -2317,20 +2378,40 @@ const AdminDashboard = () => {
               </p>
               
               <div className="space-y-4">
-                <label className="block">
-                  <div className="border-2 border-dashed border-zinc-200 rounded-2xl p-8 text-center hover:border-indigo-400 transition-colors cursor-pointer group">
-                    <FileSpreadsheet className="w-10 h-10 text-zinc-300 group-hover:text-indigo-400 mx-auto mb-3 transition-colors" />
-                    <span className="text-sm font-medium text-zinc-600 block">
-                      {file ? file.name : 'Select Excel File'}
-                    </span>
-                    <input 
-                      type="file" 
-                      accept=".xlsx, .xls" 
-                      className="hidden" 
-                      onChange={(e) => setFile(e.target.files?.[0] || null)}
-                    />
-                  </div>
-                </label>
+                <div className="flex gap-3">
+                  <label className="flex-1">
+                    <div className="border-2 border-dashed border-zinc-200 rounded-2xl p-8 text-center hover:border-indigo-400 transition-colors cursor-pointer group">
+                      <FileSpreadsheet className="w-10 h-10 text-zinc-300 group-hover:text-indigo-400 mx-auto mb-3 transition-colors" />
+                      <span className="text-sm font-medium text-zinc-600 block">
+                        {file ? file.name : 'Select Excel File'}
+                      </span>
+                      <input 
+                        type="file" 
+                        accept=".xlsx, .xls" 
+                        className="hidden" 
+                        onChange={(e) => setFile(e.target.files?.[0] || null)}
+                      />
+                    </div>
+                  </label>
+                  <button 
+                    onClick={() => {
+                      const wb = XLSX.utils.book_new();
+                      const ws = XLSX.utils.json_to_sheet([
+                        { text: 'Do you like cats?', type: 'mcq', options: 'Yes[Jump:3], No[Jump:4]', required: 'true' },
+                        { text: "What's your cat's name?", type: 'text', options: '', required: 'true' },
+                        { text: 'Why not?', type: 'text', options: '', required: 'false' }
+                      ]);
+                      XLSX.utils.book_append_sheet(wb, ws, 'Questions');
+                      const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                      saveAs(new Blob([wbout], { type: 'application/octet-stream' }), 'questions_template.xlsx');
+                    }}
+                    className="p-4 bg-zinc-50 text-zinc-500 rounded-2xl border border-zinc-100 hover:bg-zinc-100 transition-all flex flex-col items-center justify-center gap-2 group"
+                    title="Download Template"
+                  >
+                    <Download className="w-6 h-6 group-hover:text-indigo-600" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider">Template</span>
+                  </button>
+                </div>
 
                 <button 
                   onClick={handleUpload}
@@ -2352,22 +2433,100 @@ const AdminDashboard = () => {
               </div>
             </div>
 
+            {selectedSurvey.is_enumerator && (
+              <div className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm">
+                <h2 className="text-xl font-bold text-zinc-900 mb-6 flex items-center gap-2">
+                  <Users className="w-5 h-5 text-indigo-600" />
+                  Upload Enumerators
+                </h2>
+                <p className="text-sm text-zinc-500 mb-6">
+                  Upload an Excel file with columns: <code className="bg-zinc-100 px-1 rounded">username</code> and <code className="bg-zinc-100 px-1 rounded">password</code>.
+                </p>
+                
+                <div className="space-y-4">
+                  <div className="flex gap-3">
+                    <label className="flex-1">
+                      <div className="border-2 border-dashed border-zinc-200 rounded-2xl p-8 text-center hover:border-indigo-400 transition-colors cursor-pointer group">
+                        <FileSpreadsheet className="w-10 h-10 text-zinc-300 group-hover:text-indigo-400 mx-auto mb-3 transition-colors" />
+                        <span className="text-sm font-medium text-zinc-600 block">
+                          {enumeratorUsersFile ? enumeratorUsersFile.name : 'Select Excel File'}
+                        </span>
+                        <input 
+                          type="file" 
+                          accept=".xlsx, .xls" 
+                          className="hidden" 
+                          onChange={(e) => setEnumeratorUsersFile(e.target.files?.[0] || null)}
+                        />
+                      </div>
+                    </label>
+                    <button 
+                      onClick={() => {
+                        const wb = XLSX.utils.book_new();
+                        const ws = XLSX.utils.json_to_sheet([{ username: 'enum01', password: 'password123' }]);
+                        XLSX.utils.book_append_sheet(wb, ws, 'Enumerators');
+                        const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                        saveAs(new Blob([wbout], { type: 'application/octet-stream' }), 'enumerator_template.xlsx');
+                      }}
+                      className="p-4 bg-zinc-50 text-zinc-500 rounded-2xl border border-zinc-100 hover:bg-zinc-100 transition-all flex flex-col items-center justify-center gap-2 group"
+                      title="Download Template"
+                    >
+                      <Download className="w-6 h-6 group-hover:text-indigo-600" />
+                      <span className="text-[10px] font-bold uppercase tracking-wider">Template</span>
+                    </button>
+                  </div>
+
+                  <button 
+                    onClick={handleUploadEnumerators}
+                    disabled={!enumeratorUsersFile || enumeratorUploading}
+                    className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+                  >
+                    {enumeratorUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Upload className="w-5 h-5" />}
+                    {enumeratorUploading ? 'Uploading...' : 'Upload Enumerators'}
+                  </button>
+
+                  {enumeratorMessage && (
+                    <p className={cn(
+                      "text-sm font-medium p-3 rounded-lg text-center",
+                      enumeratorMessage.includes('Success') ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"
+                    )}>
+                      {enumeratorMessage}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="bg-indigo-600 p-8 rounded-3xl text-white shadow-lg shadow-indigo-200">
               <h3 className="font-bold text-lg mb-4">Required Format</h3>
               <div className="space-y-4 text-sm text-indigo-100">
                 <p>Your Excel file must have these headers:</p>
-                <ul className="list-disc list-inside space-y-1">
-                  <li><span className="font-bold text-white">text</span>: The question</li>
-                  <li><span className="font-bold text-white">type</span>: mcq, text, date, time, number</li>
-                  <li><span className="font-bold text-white">options</span>: Comma-separated. For branching, use <code className="bg-indigo-700 px-1 rounded">Option [Jump:Order]</code></li>
-                </ul>
-                <div className="bg-indigo-700/50 p-3 rounded-xl border border-indigo-400/30">
-                  <p className="font-mono text-[10px] leading-tight">
-                    text | type | options<br/>
-                    Do you like cats? | mcq | Yes[Jump:3], No[Jump:4]<br/>
-                    What's your cat's name? | text | <br/>
-                    Why not? | text | 
-                  </p>
+                <div className="space-y-4">
+                  <div className="bg-indigo-700/50 p-4 rounded-2xl border border-indigo-400/30">
+                    <p className="font-bold text-white mb-2 underline">For Questions:</p>
+                    <ul className="list-disc list-inside space-y-1 mb-3">
+                      <li><span className="font-bold text-white">text</span>: The question</li>
+                      <li><span className="font-bold text-white">type</span>: mcq, text, date, time, number</li>
+                      <li><span className="font-bold text-white">options</span>: Comma-separated. For branching, use <code className="bg-indigo-800 px-1 rounded">Option [Jump:Order]</code></li>
+                    </ul>
+                    <p className="font-mono text-[10px] leading-tight opacity-70">
+                      text | type | options<br/>
+                      Do you like cats? | mcq | Yes[Jump:3], No[Jump:4]
+                    </p>
+                  </div>
+
+                  {selectedSurvey.is_enumerator && (
+                    <div className="bg-indigo-700/50 p-4 rounded-2xl border border-indigo-400/30">
+                      <p className="font-bold text-white mb-2 underline">For Enumerators:</p>
+                      <ul className="list-disc list-inside space-y-1 mb-3">
+                        <li><span className="font-bold text-white">username</span>: Enumerator's login name</li>
+                        <li><span className="font-bold text-white">password</span>: Enumerator's login password</li>
+                      </ul>
+                      <p className="font-mono text-[10px] leading-tight opacity-70">
+                        username | password<br/>
+                        enum01 | pass123
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
