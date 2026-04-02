@@ -18,9 +18,14 @@ service cloud.firestore {
     //   - description: string
     //   - is_public: bool
     //   - is_enumerator: bool
+    //   - is_group: bool
     //   - language: string
+    //   - titleColor: string
     //   - createdBy: string (uid)
     //   - createdAt: timestamp
+    //   - isActive: bool
+    //   - allow_multiple_submissions: bool
+    //   - projectId: string
     //
     // Collection: questions
     // Fields:
@@ -118,8 +123,10 @@ service cloud.firestore {
     }
 
     function isValidSurvey(data) {
-      return hasOnlyAllowedFields(['title', 'description', 'is_public', 'is_enumerator', 'language', 'createdBy', 'createdAt', 'isActive', 'is_group', 'allow_multiple_submissions', 'projectId']) &&
-             data.title is string && data.title.size() > 0 && data.title.size() < 200;
+      return hasOnlyAllowedFields(['title', 'description', 'is_public', 'is_enumerator', 'language', 'createdBy', 'createdAt', 'isActive', 'is_group', 'allow_multiple_submissions', 'projectId', 'titleColor', 'order']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             (!('description' in data) || (data.description is string && data.description.size() < 2000)) &&
+             (!('titleColor' in data) || (data.titleColor is string && data.titleColor.size() <= 20));
     }
 
     function isValidProject(data) {

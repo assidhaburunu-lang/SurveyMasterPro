@@ -462,7 +462,11 @@ const EnumeratorLogin = () => {
         navigate(`/public/survey/${surveyId}`);
       } else {
         // Multiple surveys found, let user choose
-        setMatchingSurveys(validSurveys);
+        // Sort by title alphabetically
+        const sortedSurveys = validSurveys.sort((a: any, b: any) => {
+          return a.title.localeCompare(b.title);
+        });
+        setMatchingSurveys(sortedSurveys);
       }
     } catch (e: any) {
       console.error('Enumerator login error:', e);
@@ -505,7 +509,7 @@ const EnumeratorLogin = () => {
                 onClick={() => selectSurvey(survey.id)}
                 className="w-full p-4 text-left rounded-xl border border-zinc-100 hover:border-indigo-500 hover:bg-indigo-50 transition-all group"
               >
-                <p className="font-bold text-zinc-900 group-hover:text-indigo-600">{survey.title}</p>
+                <p className="font-bold group-hover:opacity-80" style={{ color: survey.titleColor || '#18181b' }}>{survey.title}</p>
                 <p className="text-xs text-zinc-500 line-clamp-1">{survey.description}</p>
               </button>
             ))}
@@ -665,7 +669,8 @@ const AdminDashboard = () => {
     is_public: false, 
     is_enumerator: false, 
     allow_multiple_submissions: false,
-    language: 'en' 
+    language: 'en',
+    titleColor: '#18181b'
   });
   const [enumeratorUsersFile, setEnumeratorUsersFile] = useState<File | null>(null);
   const [enumeratorUploading, setEnumeratorUploading] = useState(false);
@@ -695,10 +700,14 @@ const AdminDashboard = () => {
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
 
   const fetchSurveys = () => {
-    const q = query(collection(db, 'surveys'), orderBy('createdAt', 'desc'));
+    const q = query(collection(db, 'surveys'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setSurveys(data);
+      // Sort by title alphabetically
+      const sorted = data.sort((a: any, b: any) => {
+        return a.title.localeCompare(b.title);
+      });
+      setSurveys(sorted);
     });
     return unsubscribe;
   };
@@ -989,7 +998,9 @@ const AdminDashboard = () => {
         ...newSurvey,
         createdBy: auth.currentUser.uid,
         createdAt: serverTimestamp(),
-        isActive: true
+        isActive: true,
+        order: surveys.length,
+        titleColor: newSurvey.titleColor || '#18181b'
       });
 
       if (newSurvey.is_enumerator && enumeratorUsersFile) {
@@ -1160,7 +1171,8 @@ const AdminDashboard = () => {
       is_public: survey.is_public,
       is_enumerator: survey.is_enumerator || false,
       allow_multiple_submissions: survey.allow_multiple_submissions || false,
-      language: survey.language || 'en'
+      language: survey.language || 'en',
+      titleColor: survey.titleColor || '#18181b'
     });
     setShowCreateModal(true);
   };
@@ -1174,7 +1186,8 @@ const AdminDashboard = () => {
         is_public: newSurvey.is_public,
         is_enumerator: newSurvey.is_enumerator,
         allow_multiple_submissions: newSurvey.allow_multiple_submissions,
-        language: newSurvey.language
+        language: newSurvey.language,
+        titleColor: newSurvey.titleColor
       });
       setEditingSurvey(null);
       setShowCreateModal(false);
@@ -1184,7 +1197,8 @@ const AdminDashboard = () => {
         is_public: false, 
         is_enumerator: false, 
         allow_multiple_submissions: false,
-        language: 'en' 
+        language: 'en',
+        titleColor: '#18181b'
       });
     } catch (e) {
       console.error('Failed to update survey:', e);
@@ -1848,7 +1862,7 @@ const AdminDashboard = () => {
               <div key={survey.id} className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm hover:shadow-md transition-all group">
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex items-center gap-2">
-                    <h3 className="text-xl font-bold text-zinc-900">{survey.title}</h3>
+                    <h3 className="text-xl font-bold" style={{ color: survey.titleColor || '#18181b' }}>{survey.title}</h3>
                     {survey.is_public && (
                       <span className="bg-emerald-50 text-emerald-600 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
                         <Globe className="w-3 h-3" />
@@ -2061,6 +2075,29 @@ const AdminDashboard = () => {
                     <option value="en">English (LTR)</option>
                     <option value="dv">Dhivehi (RTL)</option>
                   </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-zinc-700 mb-2">Title Color</label>
+                  <div className="flex flex-wrap gap-2">
+                    {['#18181b', '#4f46e5', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777'].map(color => (
+                      <button
+                        key={color}
+                        type="button"
+                        onClick={() => setNewSurvey({ ...newSurvey, titleColor: color })}
+                        className={cn(
+                          "w-8 h-8 rounded-full border-2 transition-all",
+                          newSurvey.titleColor === color ? "border-indigo-600 scale-110" : "border-transparent hover:scale-105"
+                        )}
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                    <input 
+                      type="color"
+                      value={newSurvey.titleColor}
+                      onChange={(e) => setNewSurvey({ ...newSurvey, titleColor: e.target.value })}
+                      className="w-8 h-8 rounded-full border-none p-0 overflow-hidden cursor-pointer"
+                    />
+                  </div>
                 </div>
                 <div className="flex gap-3 pt-4">
                   <button 
@@ -3099,7 +3136,12 @@ const RespondentDashboard = () => {
       if (surveyIds.length > 0) {
         const surveysQ = query(collection(db, 'surveys'), where('__name__', 'in', surveyIds));
         const surveysSnap = await getDocs(surveysQ);
-        setSurveys(surveysSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        const data = surveysSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Sort by title alphabetically
+        const sorted = data.sort((a: any, b: any) => {
+          return a.title.localeCompare(b.title);
+        });
+        setSurveys(sorted);
       } else {
         setSurveys([]);
       }
@@ -3254,7 +3296,7 @@ const RespondentDashboard = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {surveys.map((survey) => (
             <div key={survey.id} className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm hover:shadow-md transition-all">
-              <h3 className="text-2xl font-bold text-zinc-900 mb-2">{survey.title}</h3>
+              <h3 className="text-2xl font-bold mb-2" style={{ color: survey.titleColor || '#18181b' }}>{survey.title}</h3>
               <p className="text-zinc-500 mb-8">{survey.description}</p>
               <button 
                 onClick={() => handleSelectSurvey(survey)}
@@ -3821,7 +3863,7 @@ const PublicSurvey = () => {
         </div>
         <div className="mb-10 flex items-center justify-between">
           <div className={cn(isRTL && "text-right")}>
-            <h1 className="text-3xl font-bold text-zinc-900 mb-2">{survey.title}</h1>
+            <h1 className="text-3xl font-bold mb-2" style={{ color: survey.titleColor || '#18181b' }}>{survey.title}</h1>
             <p className="text-zinc-500">
               {isRTL ? `ސުވާލު ${currentIndex + 1} އިން ${questions.length}` : `Question ${currentIndex + 1} of ${questions.length}`}
             </p>
