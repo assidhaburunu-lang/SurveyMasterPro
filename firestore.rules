@@ -151,7 +151,9 @@ service cloud.firestore {
 
     function isValidQuestion(data) {
       return hasOnlyAllowedFields(['surveyId', 'text', 'type', 'order', 'required', 'updatedAt']) &&
-             data.surveyId is string && data.text is string && data.type is string && data.order is int;
+             data.surveyId is string && data.text is string && data.type is string && 
+             data.type in ['mcq', 'checkbox', 'text', 'date', 'number', 'time'] &&
+             data.order is int;
     }
 
     function isValidOption(data) {

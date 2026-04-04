@@ -11,6 +11,7 @@ import {
   User, 
   FileSpreadsheet, 
   CheckCircle2,
+  CheckSquare,
   Calendar,
   Clock,
   Type,
@@ -825,20 +826,32 @@ const AdminDashboard = () => {
       const grouped: Record<string, any> = {};
       
       for (const resp of rawResponses) {
-        const key = `${resp.questionId}_${resp.answer}`;
-        if (!grouped[key]) {
-          // Find question text
-          const qDoc = await getDoc(doc(db, 'questions', resp.questionId));
-          const qData = qDoc.data();
-          grouped[key] = {
-            question_id: resp.questionId,
-            text: qData?.text || 'Unknown Question',
-            type: qData?.type || 'text',
-            answer: resp.answer,
-            count: 0
-          };
+        // Find question text and type
+        const qDoc = await getDoc(doc(db, 'questions', resp.questionId));
+        const qData = qDoc.data();
+        const qType = qData?.type || 'text';
+        const qText = qData?.text || 'Unknown Question';
+
+        const processAnswer = (ans: string) => {
+          const key = `${resp.questionId}_${ans}`;
+          if (!grouped[key]) {
+            grouped[key] = {
+              question_id: resp.questionId,
+              text: qText,
+              type: qType,
+              answer: ans,
+              count: 0
+            };
+          }
+          grouped[key].count++;
+        };
+
+        if (qType === 'checkbox' && resp.answer) {
+          const options = resp.answer.split(',').map((s: string) => s.trim()).filter(Boolean);
+          options.forEach(processAnswer);
+        } else {
+          processAnswer(resp.answer);
         }
-        grouped[key].count++;
       }
       
       setStats(Object.values(grouped));
@@ -906,7 +919,7 @@ const AdminDashboard = () => {
       
       batch.set(qRef, questionData);
 
-      if (newQuestion.type === 'mcq') {
+      if (newQuestion.type === 'mcq' || newQuestion.type === 'checkbox') {
         newQuestion.options.forEach(optText => {
           if (optText.trim()) {
             const optRef = doc(collection(db, 'options'));
@@ -1521,13 +1534,13 @@ const AdminDashboard = () => {
         updatedAt: serverTimestamp()
       });
       
-      if (newType !== 'mcq') {
-        // Delete options if not MCQ
+      if (newType !== 'mcq' && newType !== 'checkbox') {
+        // Delete options if not MCQ or Checkbox
         const optQ = query(collection(db, 'options'), where('questionId', '==', id));
         const optSnap = await getDocs(optQ);
         optSnap.docs.forEach(oDoc => batch.delete(oDoc.ref));
       } else {
-        // If changed to MCQ and no options, add a default
+        // If changed to MCQ/Checkbox and no options, add a default
         const optQ = query(collection(db, 'options'), where('questionId', '==', id));
         const optSnap = await getDocs(optQ);
         if (optSnap.empty) {
@@ -2851,6 +2864,7 @@ const AdminDashboard = () => {
                         className="px-2 py-1 rounded-md bg-indigo-50 text-indigo-600 text-[10px] font-bold uppercase tracking-wider outline-none border-none cursor-pointer hover:bg-indigo-100 transition-all appearance-none"
                       >
                         <option value="mcq">MCQ</option>
+                        <option value="checkbox">Checkbox</option>
                         <option value="text">Text</option>
                         <option value="number">Number</option>
                         <option value="date">Date</option>
@@ -2898,7 +2912,7 @@ const AdminDashboard = () => {
                     </div>
                   </div>
                   <h3 className={cn("font-bold text-zinc-800 mb-4", isRTL && "text-right")}>{q.text}</h3>
-                  {q.type === 'mcq' && q.options && (
+                  {(q.type === 'mcq' || q.type === 'checkbox') && q.options && (
                     <div className="space-y-3">
                       {q.options.map((opt: any) => (
                         <div key={opt.id} className={cn("text-sm text-zinc-600 flex flex-col gap-2 p-3 rounded-xl bg-white border border-zinc-100", isRTL && "text-right")}>
@@ -2929,7 +2943,7 @@ const AdminDashboard = () => {
                       ))}
                     </div>
                   )}
-                  {q.type !== 'mcq' && (
+                  {(q.type !== 'mcq' && q.type !== 'checkbox') && (
                     <div className="text-xs italic text-zinc-400">
                       {q.type === 'text' && 'Open text response'}
                       {q.type === 'date' && 'Date picker input'}
@@ -2969,6 +2983,7 @@ const AdminDashboard = () => {
                 <div className="grid grid-cols-2 gap-2">
                   {[
                     { id: 'mcq', label: isRTL ? 'އިޚްތިޔާރީ' : 'Multiple Choice', icon: ListTodo },
+                    { id: 'checkbox', label: isRTL ? 'މަލްޓިޕަލް ސެލެކްޝަން' : 'Multiple Selection', icon: CheckSquare },
                     { id: 'text', label: isRTL ? 'ލިޔުން' : 'Text Input', icon: Type },
                     { id: 'number', label: isRTL ? 'ނަންބަރު' : 'Number Input', icon: Hash },
                     { id: 'date', label: isRTL ? 'ތާރީޚް' : 'Date Input', icon: Calendar },
@@ -3010,7 +3025,7 @@ const AdminDashboard = () => {
                 </button>
               </div>
 
-              {newQuestion.type === 'mcq' && (
+              {(newQuestion.type === 'mcq' || newQuestion.type === 'checkbox') && (
                 <div className="space-y-2">
                   <label className="block text-sm font-bold text-zinc-700 mb-1">{isRTL ? 'އިޚްތިޔާރުތައް' : 'Options'}</label>
                   {newQuestion.options.map((opt, idx) => (
@@ -3404,6 +3419,46 @@ const RespondentDashboard = () => {
                   )}>{opt.text}</span>
                 </label>
               ))}
+            </div>
+          )}
+
+          {currentQuestion.type === 'checkbox' && (
+            <div className="grid grid-cols-1 gap-3">
+              {currentQuestion.options.map((opt: any) => {
+                const currentAnswers = (answers[currentQuestion.id] || '').split(',').filter(Boolean);
+                const isChecked = currentAnswers.includes(opt.text);
+                return (
+                  <label key={opt.text} className={cn(
+                    "flex items-center gap-4 p-5 rounded-2xl border transition-all cursor-pointer group",
+                    isChecked 
+                      ? "border-indigo-600 bg-indigo-50/50 ring-1 ring-indigo-600" 
+                      : "border-zinc-100 hover:border-indigo-200 hover:bg-zinc-50",
+                    isRTL && "flex-row-reverse"
+                  )}>
+                    <input 
+                      type="checkbox" 
+                      name={`q-${currentQuestion.id}`} 
+                      value={opt.text}
+                      checked={isChecked}
+                      onChange={(e) => {
+                        let newAnswers;
+                        if (e.target.checked) {
+                          newAnswers = [...currentAnswers, opt.text];
+                        } else {
+                          newAnswers = currentAnswers.filter(a => a !== opt.text);
+                        }
+                        setAnswers({ ...answers, [currentQuestion.id]: newAnswers.join(',') });
+                      }}
+                      className="w-5 h-5 text-indigo-600 border-zinc-300 rounded focus:ring-indigo-500"
+                    />
+                    <span className={cn(
+                      "font-bold transition-colors flex-1",
+                      isChecked ? "text-indigo-900" : "text-zinc-700",
+                      isRTL && "text-right"
+                    )}>{opt.text}</span>
+                  </label>
+                );
+              })}
             </div>
           )}
 
@@ -3916,6 +3971,46 @@ const PublicSurvey = () => {
                     )}>{opt.text}</span>
                   </label>
                 ))}
+              </div>
+            )}
+
+            {currentQuestion.type === 'checkbox' && (
+              <div className="grid grid-cols-1 gap-3">
+                {currentQuestion.options.map((opt: any) => {
+                  const currentAnswers = (answers[currentQuestion.id] || '').split(',').filter(Boolean);
+                  const isChecked = currentAnswers.includes(opt.text);
+                  return (
+                    <label key={opt.text} className={cn(
+                      "flex items-center gap-4 p-5 rounded-2xl border transition-all cursor-pointer group",
+                      isChecked 
+                        ? "border-indigo-600 bg-indigo-50/50 ring-1 ring-indigo-600" 
+                        : "border-zinc-100 hover:border-indigo-200 hover:bg-zinc-50",
+                      isRTL && "flex-row-reverse"
+                    )}>
+                      <input 
+                        type="checkbox" 
+                        name={`q-${currentQuestion.id}`} 
+                        value={opt.text}
+                        checked={isChecked}
+                        onChange={(e) => {
+                          let newAnswers;
+                          if (e.target.checked) {
+                            newAnswers = [...currentAnswers, opt.text];
+                          } else {
+                            newAnswers = currentAnswers.filter(a => a !== opt.text);
+                          }
+                          setAnswers({ ...answers, [currentQuestion.id]: newAnswers.join(',') });
+                        }}
+                        className="w-5 h-5 text-indigo-600 border-zinc-300 rounded focus:ring-indigo-500"
+                      />
+                      <span className={cn(
+                        "font-bold transition-colors flex-1",
+                        isChecked ? "text-indigo-900" : "text-zinc-700",
+                        isRTL && "text-right"
+                      )}>{opt.text}</span>
+                    </label>
+                  );
+                })}
               </div>
             )}
 
