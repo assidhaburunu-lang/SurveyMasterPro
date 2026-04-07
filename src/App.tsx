@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useMemo } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Link, useNavigate, useParams, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -38,7 +38,11 @@ import {
   AlignLeft,
   Sigma,
   Sparkles,
-  FileText
+  FileText,
+  FolderPlus,
+  Folder,
+  X,
+  Filter
 } from 'lucide-react';
 import { 
   PieChart as RePieChart, 
@@ -659,8 +663,13 @@ const LoginPage = () => {
 const AdminDashboard = () => {
   const { user } = useAuth();
   const [surveys, setSurveys] = useState<any[]>([]);
+  const [folders, setFolders] = useState<any[]>([]);
   const [selectedSurvey, setSelectedSurvey] = useState<any | null>(null);
   const isRTL = selectedSurvey?.language === 'dv';
+  const [showCreateFolderModal, setShowCreateFolderModal] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
+  const [editingFolderName, setEditingFolderName] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showQRModal, setShowQRModal] = useState<any | null>(null);
   const [editingSurvey, setEditingSurvey] = useState<any | null>(null);
@@ -671,7 +680,8 @@ const AdminDashboard = () => {
     is_enumerator: false, 
     allow_multiple_submissions: false,
     language: 'en',
-    titleColor: '#18181b'
+    titleColor: '#18181b',
+    folderId: ''
   });
   const [enumeratorUsersFile, setEnumeratorUsersFile] = useState<File | null>(null);
   const [enumeratorUploading, setEnumeratorUploading] = useState(false);
@@ -680,22 +690,37 @@ const AdminDashboard = () => {
   const [enumeratorSubmissions, setEnumeratorSubmissions] = useState<any[]>([]);
 
   const [file, setFile] = useState<File | null>(null);
+  const [responsesFile, setResponsesFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [responsesUploading, setResponsesUploading] = useState(false);
   const [message, setMessage] = useState('');
+  const [responsesMessage, setResponsesMessage] = useState('');
   const [stats, setStats] = useState<any[]>([]);
+  const [statsFilter, setStatsFilter] = useState<{ questionId: string, answer: string } | null>(null);
+  const [submissionsList, setSubmissionsList] = useState<any[]>([]);
   const [questions, setQuestions] = useState<any[]>([]);
   const [respondents, setRespondents] = useState<any[]>([]);
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [view, setView] = useState<'surveys' | 'users' | 'settings'>('surveys');
   const [assignedUserIds, setAssignedUserIds] = useState<number[]>([]);
-  const [activeTab, setActiveTab] = useState<'stats' | 'preview' | 'assignments' | 'tracking' | 'settings'>('stats');
+  const [activeTab, setActiveTab] = useState<'stats' | 'preview' | 'assignments' | 'tracking' | 'settings' | 'analysis' | 'responses'>('stats');
   const [settings, setSettings] = useState<Record<string, any>>({});
   const [editingSettings, setEditingSettings] = useState(false);
   const [vizPreferences, setVizPreferences] = useState<Record<number, string>>({});
   const [showAddQuestionModal, setShowAddQuestionModal] = useState(false);
   const [newQuestion, setNewQuestion] = useState({ text: '', type: 'text', options: [''], required: true });
   const [generatingReport, setGeneratingReport] = useState(false);
+  const [report, setReport] = useState<string | null>(null);
   const [reportLanguage, setReportLanguage] = useState<'en' | 'dv'>('en');
+  const [analysisOptions, setAnalysisOptions] = useState({
+    detailLevel: 'summary' as 'summary' | 'detailed',
+    includePercentages: true,
+    includeNumbers: true,
+    compareQuestions: false,
+    compareQ1: '',
+    compareQ2: '',
+    customPrompt: ''
+  });
   const [confirmModal, setConfirmModal] = useState<{ show: boolean, title: string, message: string, onConfirm: () => void } | null>(null);
 
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
@@ -709,6 +734,18 @@ const AdminDashboard = () => {
         return a.title.localeCompare(b.title);
       });
       setSurveys(sorted);
+    });
+    return unsubscribe;
+  };
+
+  const fetchFolders = () => {
+    const q = query(collection(db, 'folders'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const sorted = data.sort((a: any, b: any) => {
+        return a.name.localeCompare(b.name);
+      });
+      setFolders(sorted);
     });
     return unsubscribe;
   };
@@ -816,19 +853,91 @@ const AdminDashboard = () => {
     return unsubscribe;
   };
 
+  const filteredStats = useMemo(() => {
+    if (!statsFilter || !statsFilter.questionId || !statsFilter.answer) return stats;
+
+    const validSubmissionIds = new Set(
+      submissionsList
+        .filter(sub => {
+          const ans = sub.answers[statsFilter.questionId];
+          if (!ans) return false;
+          if (typeof ans === 'string' && ans.includes(',')) {
+            return ans.split(',').map(s => s.trim()).includes(statsFilter.answer);
+          }
+          return ans === statsFilter.answer;
+        })
+        .map(sub => sub.submissionId)
+    );
+
+    const grouped: Record<string, any> = {};
+    
+    submissionsList.forEach(sub => {
+      if (!validSubmissionIds.has(sub.submissionId)) return;
+      
+      Object.entries(sub.answers).forEach(([qId, ans]) => {
+        const qData = questions.find(q => q.id === qId);
+        const qType = qData?.type || 'text';
+        const qText = qData?.text || 'Unknown Question';
+        
+        const processAnswer = (a: string) => {
+          const key = `${qId}_${a}`;
+          if (!grouped[key]) {
+            grouped[key] = {
+              question_id: qId,
+              text: qText,
+              type: qType,
+              answer: a,
+              count: 0
+            };
+          }
+          grouped[key].count++;
+        };
+
+        if (qType === 'checkbox' && ans) {
+          const options = (ans as string).split(',').map((s: string) => s.trim()).filter(Boolean);
+          options.forEach(processAnswer);
+        } else if (ans) {
+          processAnswer(ans as string);
+        }
+      });
+    });
+
+    return Object.values(grouped);
+  }, [stats, statsFilter, submissionsList, questions]);
+
   const fetchStats = () => {
     if (!selectedSurvey) return;
     const q = query(collection(db, 'responses'), where('surveyId', '==', selectedSurvey.id));
     const unsubscribe = onSnapshot(q, async (snapshot) => {
       const rawResponses = snapshot.docs.map(doc => doc.data());
       
+      // Get all questions for this survey once
+      const qSnap = await getDocs(query(collection(db, 'questions'), where('surveyId', '==', selectedSurvey.id)));
+      const questionsMap: Record<string, any> = {};
+      qSnap.docs.forEach(doc => {
+        questionsMap[doc.id] = doc.data();
+      });
+
       // Group responses by questionId and answer to match the previous stats format
       const grouped: Record<string, any> = {};
+      const submissionsMap: Record<string, any> = {};
       
       for (const resp of rawResponses) {
-        // Find question text and type
-        const qDoc = await getDoc(doc(db, 'questions', resp.questionId));
-        const qData = qDoc.data();
+        // Build submissions list
+        if (resp.submissionId) {
+          if (!submissionsMap[resp.submissionId]) {
+            submissionsMap[resp.submissionId] = {
+              submissionId: resp.submissionId,
+              submittedAt: resp.submittedAt,
+              userId: resp.userId,
+              enumeratorUsername: resp.enumeratorUsername,
+              answers: {}
+            };
+          }
+          submissionsMap[resp.submissionId].answers[resp.questionId] = resp.answer;
+        }
+
+        const qData = questionsMap[resp.questionId];
         const qType = qData?.type || 'text';
         const qText = qData?.text || 'Unknown Question';
 
@@ -855,6 +964,11 @@ const AdminDashboard = () => {
       }
       
       setStats(Object.values(grouped));
+      setSubmissionsList(Object.values(submissionsMap).sort((a, b) => {
+        const timeA = a.submittedAt?.toMillis?.() || 0;
+        const timeB = b.submittedAt?.toMillis?.() || 0;
+        return timeB - timeA;
+      }));
     });
     return unsubscribe;
   };
@@ -874,10 +988,12 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     const unsubSurveys = fetchSurveys();
+    const unsubFolders = fetchFolders();
     const unsubAllUsers = fetchAllUsers();
     const unsubSettings = fetchSettings();
     return () => {
       unsubSurveys();
+      unsubFolders();
       unsubAllUsers();
       unsubSettings();
     };
@@ -885,6 +1001,7 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     if (selectedSurvey) {
+      setStatsFilter(null);
       const unsubQuestions = fetchQuestions();
       const unsubRespondents = fetchRespondents();
       const unsubAssignments = fetchAssignments();
@@ -899,6 +1016,8 @@ const AdminDashboard = () => {
         unsubEnumeratorUsers?.();
         unsubEnumeratorSubmissions?.();
       };
+    } else {
+      setStatsFilter(null);
     }
   }, [selectedSurvey]);
 
@@ -1004,6 +1123,22 @@ const AdminDashboard = () => {
     }
   };
 
+  const handleCreateFolder = async () => {
+    if (!auth.currentUser || !newFolderName.trim()) return;
+    try {
+      await addDoc(collection(db, 'folders'), {
+        name: newFolderName.trim(),
+        createdBy: auth.currentUser.uid,
+        createdAt: serverTimestamp()
+      });
+      setNewFolderName('');
+      setShowCreateFolderModal(false);
+    } catch (error) {
+      console.error('Failed to create folder:', error);
+      alert('Failed to create folder.');
+    }
+  };
+
   const handleCreateSurvey = async () => {
     if (!auth.currentUser) return;
     try {
@@ -1048,12 +1183,50 @@ const AdminDashboard = () => {
         is_public: false, 
         is_enumerator: false, 
         allow_multiple_submissions: false,
-        language: 'en' 
+        language: 'en',
+        titleColor: '#18181b',
+        folderId: ''
       });
       setEnumeratorUsersFile(null);
     } catch (e) {
       console.error('Failed to create survey:', e);
     }
+  };
+
+  const handleRenameFolder = async () => {
+    if (!editingFolderId || !editingFolderName.trim()) return;
+    try {
+      await updateDoc(doc(db, 'folders', editingFolderId), {
+        name: editingFolderName.trim()
+      });
+      setEditingFolderId(null);
+      setEditingFolderName('');
+    } catch (error) {
+      console.error('Failed to rename folder:', error);
+      alert('Failed to rename folder.');
+    }
+  };
+
+  const handleDeleteFolder = async (id: string) => {
+    setConfirmModal({
+      show: true,
+      title: 'Delete Folder',
+      message: 'Are you sure you want to delete this folder? Surveys inside will be moved to Uncategorized.',
+      onConfirm: async () => {
+        setConfirmModal(null);
+        try {
+          // Update surveys in this folder to have no folder
+          const surveysInFolder = surveys.filter(s => s.folderId === id);
+          for (const survey of surveysInFolder) {
+            await updateDoc(doc(db, 'surveys', survey.id), { folderId: null });
+          }
+          await deleteDoc(doc(db, 'folders', id));
+        } catch (error) {
+          console.error('Failed to delete folder:', error);
+          alert('Failed to delete folder.');
+        }
+      }
+    });
   };
 
   const handleDeleteSurvey = async (id: string) => {
@@ -1185,7 +1358,8 @@ const AdminDashboard = () => {
       is_enumerator: survey.is_enumerator || false,
       allow_multiple_submissions: survey.allow_multiple_submissions || false,
       language: survey.language || 'en',
-      titleColor: survey.titleColor || '#18181b'
+      titleColor: survey.titleColor || '#18181b',
+      folderId: survey.folderId || ''
     });
     setShowCreateModal(true);
   };
@@ -1200,7 +1374,8 @@ const AdminDashboard = () => {
         is_enumerator: newSurvey.is_enumerator,
         allow_multiple_submissions: newSurvey.allow_multiple_submissions,
         language: newSurvey.language,
-        titleColor: newSurvey.titleColor
+        titleColor: newSurvey.titleColor,
+        folderId: newSurvey.folderId || null
       });
       setEditingSurvey(null);
       setShowCreateModal(false);
@@ -1211,7 +1386,8 @@ const AdminDashboard = () => {
         is_enumerator: false, 
         allow_multiple_submissions: false,
         language: 'en',
-        titleColor: '#18181b'
+        titleColor: '#18181b',
+        folderId: ''
       });
     } catch (e) {
       console.error('Failed to update survey:', e);
@@ -1234,29 +1410,66 @@ const AdminDashboard = () => {
           const s = calculateNumberStats(qStats);
           details = `Mean: ${s?.mean}, Median: ${s?.median}, Mode: ${s?.mode}`;
         } else {
-          details = qStats.map(s => `${s.answer}: ${s.count} (${((s.count / total) * 100).toFixed(1)}%)`).join('\n');
+          details = qStats.map(s => {
+            let statText = s.answer;
+            if (analysisOptions.includeNumbers && analysisOptions.includePercentages) {
+              statText += `: ${s.count} (${((s.count / total) * 100).toFixed(1)}%)`;
+            } else if (analysisOptions.includeNumbers) {
+              statText += `: ${s.count}`;
+            } else if (analysisOptions.includePercentages) {
+              statText += `: ${((s.count / total) * 100).toFixed(1)}%`;
+            }
+            return statText;
+          }).join('\n');
         }
         
         return {
+          id: qId,
           text: qText,
           type: qType,
           details: details
         };
       });
 
-      const statsSummary = questionBreakdown.map(q => `Question: ${q.text}\nType: ${q.type}\nData: ${q.details}`).join('\n\n');
+      let statsSummary = questionBreakdown.map(q => `Question: ${q.text}\nType: ${q.type}\nData: ${q.details}`).join('\n\n');
+
+      if (analysisOptions.compareQuestions && analysisOptions.compareQ1 && analysisOptions.compareQ2) {
+        const q1 = questionBreakdown.find(q => q.id === analysisOptions.compareQ1);
+        const q2 = questionBreakdown.find(q => q.id === analysisOptions.compareQ2);
+        if (q1 && q2) {
+          statsSummary += `\n\n--- COMPARISON REQUESTED ---\nPlease specifically compare the results of "${q1.text}" with "${q2.text}" and provide insights on their relationship.`;
+        }
+      }
 
       const languageInstruction = reportLanguage === 'dv' 
         ? "IMPORTANT: You MUST write the entire report in Dhivehi (Maldivian language). Use Dhivehi script."
         : "IMPORTANT: You MUST write the entire report in English.";
 
-      const prompt = `Analyze the following survey results for the survey titled "${selectedSurvey.title}". 
-      Provide a professional report with the following sections:
+      let reportStructure = "";
+      if (analysisOptions.detailLevel === 'summary') {
+        reportStructure = `
       1. Executive Summary: A brief overview of the results.
       2. Key Insights: Use numbered bullets (1., 2., 3., etc.) for each insight.
-      3. Recommendations: Use standard bullet points (• or -) for each recommendation.
+      3. Recommendations: Use standard bullet points (• or -) for each recommendation.`;
+      } else {
+        reportStructure = `
+      1. Executive Summary: A brief overview of the results.
+      2. Detailed Question Analysis: Analyze each question separately, providing insights for each.
+      3. Key Insights: Use numbered bullets (1., 2., 3., etc.) for each insight.
+      4. Recommendations: Use standard bullet points (• or -) for each recommendation.`;
+      }
+
+      let customPromptSection = "";
+      if (analysisOptions.customPrompt && analysisOptions.customPrompt.trim() !== "") {
+        customPromptSection = `\n\nAdditional Instructions from Admin:\n${analysisOptions.customPrompt.trim()}`;
+      }
+
+      const prompt = `Analyze the following survey results for the survey titled "${selectedSurvey.title}". 
+      Provide a professional report with the following sections:
+      ${reportStructure}
       
       ${languageInstruction}
+      ${customPromptSection}
       
       IMPORTANT: Do NOT use any Markdown formatting symbols like asterisks (*) or hashes (#) in your response. Use plain text only for the content, with clear section titles.
       
@@ -1281,8 +1494,20 @@ const AdminDashboard = () => {
       let aiAnalysis = response.text;
       // Remove any remaining * or # symbols
       aiAnalysis = aiAnalysis.replace(/[*#]/g, '');
+      
+      setReport(aiAnalysis);
 
-      // 2. Create Word Document
+    } catch (error: any) {
+      console.error('Failed to generate report:', error);
+      alert(`Failed to generate AI report: ${error.message || 'Unknown error'}`);
+    } finally {
+      setGeneratingReport(false);
+    }
+  };
+
+  const handleDownloadWordReport = async () => {
+    if (!report || !selectedSurvey) return;
+    try {
       const isRTL = reportLanguage === 'dv';
       const alignment = isRTL ? AlignmentType.RIGHT : AlignmentType.LEFT;
 
@@ -1305,7 +1530,7 @@ const AdminDashboard = () => {
       ];
 
       // Add AI Analysis text
-      aiAnalysis.split('\n').forEach(line => {
+      report.split('\n').forEach(line => {
         if (line.trim()) {
           sections.push(new Paragraph({
             children: [new TextRun(line)],
@@ -1313,34 +1538,6 @@ const AdminDashboard = () => {
             alignment,
           }));
         }
-      });
-
-      sections.push(new Paragraph({ text: "", spacing: { after: 400 } }));
-      sections.push(new Paragraph({
-        text: isRTL ? "ސުވާލުތަކުގެ ތަފްސީލް" : "Detailed Question Breakdown",
-        heading: HeadingLevel.HEADING_1,
-        alignment,
-      }));
-
-      // Add Question Breakdown text
-      questionBreakdown.forEach(q => {
-        sections.push(new Paragraph({
-          children: [new TextRun({ text: q.text, bold: true })],
-          spacing: { before: 400 },
-          alignment,
-        }));
-        sections.push(new Paragraph({
-          children: [new TextRun({ text: `${isRTL ? 'ބާވަތް' : 'Type'}: ${q.type}`, italics: true })],
-          alignment,
-        }));
-        
-        q.details.split('\n').forEach(detailLine => {
-          sections.push(new Paragraph({
-            children: [new TextRun(detailLine)],
-            indent: isRTL ? { right: 720 } : { left: 720 },
-            alignment,
-          }));
-        });
       });
 
       const doc = new Document({
@@ -1354,10 +1551,8 @@ const AdminDashboard = () => {
       saveAs(blob, `${selectedSurvey.title.replace(/\s+/g, '_')}_Analysis_Report.docx`);
 
     } catch (error: any) {
-      console.error('Failed to generate report:', error);
-      alert(`Failed to generate AI report: ${error.message || 'Unknown error'}`);
-    } finally {
-      setGeneratingReport(false);
+      console.error('Failed to download Word document:', error);
+      alert('Failed to download Word document.');
     }
   };
 
@@ -1460,6 +1655,29 @@ const AdminDashboard = () => {
           setConfirmModal(null);
         } catch (e) {
           console.error('Failed to clear questions:', e);
+        }
+      }
+    });
+  };
+
+  const handleDeleteSubmission = async (submissionId: string) => {
+    setConfirmModal({
+      show: true,
+      title: 'Delete Response',
+      message: 'Are you sure you want to delete this individual response? This cannot be undone.',
+      onConfirm: async () => {
+        if (!selectedSurvey) return;
+        try {
+          const respQ = query(collection(db, 'responses'), where('submissionId', '==', submissionId));
+          const snap = await getDocs(respQ);
+          
+          const batch = writeBatch(db);
+          snap.docs.forEach(doc => batch.delete(doc.ref));
+          await batch.commit();
+          
+          setConfirmModal(null);
+        } catch (e) {
+          console.error('Failed to delete submission:', e);
         }
       }
     });
@@ -1571,6 +1789,114 @@ const AdminDashboard = () => {
     }
   };
 
+
+  const handleUploadResponses = async () => {
+    if (!responsesFile || !selectedSurvey) return;
+    setResponsesUploading(true);
+    setResponsesMessage('');
+    
+    try {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          const data = e.target?.result;
+          const workbook = XLSX.read(data, { type: 'array' });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          const rawData: any[] = XLSX.utils.sheet_to_json(worksheet);
+          
+          if (rawData.length === 0) {
+            setResponsesMessage('Excel file must have at least one data row');
+            setResponsesUploading(false);
+            return;
+          }
+
+          // Get questions for this survey to map headers to questionIds
+          const qSnap = await getDocs(query(collection(db, 'questions'), where('surveyId', '==', selectedSurvey.id)));
+          let surveyQuestions = qSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+          const batch = writeBatch(db);
+          let count = 0;
+          let newQuestionsCreated = false;
+
+          if (surveyQuestions.length === 0) {
+            const headers = Object.keys(rawData[0] || {});
+            if (headers.length === 0) {
+              setResponsesMessage('Excel file is empty or has no headers.');
+              setResponsesUploading(false);
+              return;
+            }
+            
+            let order = 1;
+            for (const header of headers) {
+              const values = rawData.map(r => r[header]).filter(v => v !== undefined && v !== null && v !== '');
+              const uniqueValues = new Set(values);
+              let inferredType = 'text';
+              
+              if (values.length > 0 && Array.from(uniqueValues).every(v => !isNaN(Number(v)))) {
+                inferredType = 'number';
+              } else if (uniqueValues.size > 0 && uniqueValues.size <= 15) {
+                inferredType = 'mcq';
+              }
+
+              const qRef = doc(collection(db, 'questions'));
+              const newQ = {
+                surveyId: selectedSurvey.id,
+                text: header,
+                type: inferredType,
+                order: order++,
+                required: false,
+                updatedAt: serverTimestamp()
+              };
+              batch.set(qRef, newQ);
+              surveyQuestions.push({ id: qRef.id, ...newQ });
+            }
+            newQuestionsCreated = true;
+          }
+
+          for (const row of rawData) {
+            const submissionId = `imported_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            const submittedAt = serverTimestamp();
+
+            // Map each column to a question
+            for (const q of surveyQuestions as any[]) {
+              // Try to find a column that matches the question text (case-insensitive)
+              const columnKey = Object.keys(row).find(key => 
+                key.toLowerCase().trim() === q.text.toLowerCase().trim()
+              );
+
+              if (columnKey !== undefined) {
+                const answer = String(row[columnKey] || '');
+                const responseRef = doc(collection(db, 'responses'));
+                batch.set(responseRef, {
+                  surveyId: selectedSurvey.id,
+                  questionId: q.id,
+                  submissionId,
+                  answer,
+                  submittedAt,
+                  imported: true
+                });
+                count++;
+              }
+            }
+          }
+
+          await batch.commit();
+          setResponsesMessage(`Successfully imported ${rawData.length} submissions (${count} individual responses)${newQuestionsCreated ? ' and auto-created questions' : ''}.`);
+          setResponsesFile(null);
+        } catch (err: any) {
+          console.error("Error processing file:", err);
+          setResponsesMessage(`Error: ${err.message}`);
+        } finally {
+          setResponsesUploading(false);
+        }
+      };
+      reader.readAsArrayBuffer(responsesFile);
+    } catch (err: any) {
+      setResponsesMessage(`Error: ${err.message}`);
+      setResponsesUploading(false);
+    }
+  };
 
   const handleUpload = async () => {
     if (!file || !selectedSurvey) return;
@@ -1796,13 +2122,22 @@ const AdminDashboard = () => {
             </div>
           </div>
           {view === 'surveys' && (
-            <button 
-              onClick={() => setShowCreateModal(true)}
-              className="bg-indigo-600 text-white px-6 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-indigo-700 transition-all"
-            >
-              <Plus className="w-5 h-5" />
-              Create Survey
-            </button>
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={() => setShowCreateFolderModal(true)}
+                className="bg-zinc-100 text-zinc-700 px-6 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-zinc-200 transition-all"
+              >
+                <FolderPlus className="w-5 h-5" />
+                Create Folder
+              </button>
+              <button 
+                onClick={() => setShowCreateModal(true)}
+                className="bg-indigo-600 text-white px-6 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-indigo-700 transition-all"
+              >
+                <Plus className="w-5 h-5" />
+                Create Survey
+              </button>
+            </div>
           )}
         </div>
 
@@ -1870,70 +2205,235 @@ const AdminDashboard = () => {
             </div>
           </div>
         ) : view === 'surveys' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {surveys.map((survey) => (
-              <div key={survey.id} className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm hover:shadow-md transition-all group">
-                <div className="flex justify-between items-start mb-4">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-xl font-bold" style={{ color: survey.titleColor || '#18181b' }}>{survey.title}</h3>
-                    {survey.is_public && (
-                      <span className="bg-emerald-50 text-emerald-600 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                        <Globe className="w-3 h-3" />
-                        PUBLIC
-                      </span>
-                    )}
-                    {survey.language === 'dv' && (
-                      <span className="bg-amber-50 text-amber-600 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                        DV (RTL)
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {survey.is_public && (
-                      <>
-                        <button 
-                          onClick={() => setShowQRModal(survey)}
-                          className="text-zinc-300 hover:text-indigo-600 transition-colors"
-                          title="Show QR Code"
-                        >
-                          <QrCode className="w-4 h-4" />
-                        </button>
+          <div className="space-y-8">
+            {folders.map(folder => {
+              const folderSurveys = surveys.filter(s => s.folderId === folder.id);
+              return (
+                <div key={folder.id} className="bg-zinc-50/50 p-6 rounded-[32px] border border-zinc-100">
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-3">
+                      <div className="bg-white p-2 rounded-xl shadow-sm">
+                        <Folder className="w-6 h-6 text-indigo-600" />
+                      </div>
+                      {editingFolderId === folder.id ? (
+                        <div className="flex items-center gap-2">
+                          <input 
+                            type="text" 
+                            value={editingFolderName}
+                            onChange={(e) => setEditingFolderName(e.target.value)}
+                            className="px-3 py-1.5 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold"
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleRenameFolder();
+                              if (e.key === 'Escape') {
+                                setEditingFolderId(null);
+                                setEditingFolderName('');
+                              }
+                            }}
+                          />
+                          <button 
+                            onClick={handleRenameFolder}
+                            className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-indigo-700"
+                          >
+                            Save
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setEditingFolderId(null);
+                              setEditingFolderName('');
+                            }}
+                            className="bg-zinc-200 text-zinc-700 px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-zinc-300"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <h2 className="text-xl font-bold text-zinc-900">{folder.name}</h2>
+                          <span className="text-sm font-medium text-zinc-500 bg-zinc-200/50 px-2.5 py-0.5 rounded-full">
+                            {folderSurveys.length}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {editingFolderId !== folder.id && (
                         <button 
                           onClick={() => {
-                            const url = `${window.location.origin}/public/survey/${survey.id}`;
-                            navigator.clipboard.writeText(url);
-                            alert('Public link copied to clipboard!');
+                            setEditingFolderId(folder.id);
+                            setEditingFolderName(folder.name);
                           }}
-                          className="text-zinc-300 hover:text-indigo-600 transition-colors"
-                          title="Copy Public Link"
+                          className="text-zinc-400 hover:text-indigo-600 transition-colors p-2 hover:bg-indigo-50 rounded-lg"
+                          title="Rename Folder"
                         >
-                          <LinkIcon className="w-4 h-4" />
+                          <Pencil className="w-5 h-5" />
                         </button>
-                      </>
+                      )}
+                      <button 
+                        onClick={() => handleDeleteFolder(folder.id)}
+                        className="text-zinc-400 hover:text-red-500 transition-colors p-2 hover:bg-red-50 rounded-lg"
+                        title="Delete Folder"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {folderSurveys.map((survey) => (
+                      <div key={survey.id} className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm hover:shadow-md transition-all group">
+                        <div className="flex justify-between items-start mb-4">
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-xl font-bold" style={{ color: survey.titleColor || '#18181b' }}>{survey.title}</h3>
+                            {survey.is_public && (
+                              <span className="bg-emerald-50 text-emerald-600 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                                <Globe className="w-3 h-3" />
+                                PUBLIC
+                              </span>
+                            )}
+                            {survey.language === 'dv' && (
+                              <span className="bg-amber-50 text-amber-600 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                DV (RTL)
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {survey.is_public && (
+                              <>
+                                <button 
+                                  onClick={() => setShowQRModal(survey)}
+                                  className="text-zinc-300 hover:text-indigo-600 transition-colors"
+                                  title="Show QR Code"
+                                >
+                                  <QrCode className="w-4 h-4" />
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    const url = `${window.location.origin}/public/survey/${survey.id}`;
+                                    navigator.clipboard.writeText(url);
+                                    alert('Public link copied to clipboard!');
+                                  }}
+                                  className="text-zinc-300 hover:text-indigo-600 transition-colors"
+                                  title="Copy Public Link"
+                                >
+                                  <LinkIcon className="w-4 h-4" />
+                                </button>
+                              </>
+                            )}
+                            <button 
+                              onClick={() => handleEditSurvey(survey)}
+                              className="text-zinc-300 hover:text-indigo-600 transition-colors"
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteSurvey(survey.id)}
+                              className="text-zinc-300 hover:text-red-500 transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                        <p className="text-zinc-500 text-sm mb-6 line-clamp-2">{survey.description}</p>
+                        <button 
+                          onClick={() => setSelectedSurvey(survey)}
+                          className="w-full bg-zinc-100 text-zinc-900 font-bold py-3 rounded-xl hover:bg-indigo-600 hover:text-white transition-all"
+                        >
+                          Manage Survey
+                        </button>
+                      </div>
+                    ))}
+                    {folderSurveys.length === 0 && (
+                      <div className="col-span-full text-center py-12 bg-white rounded-3xl border border-dashed border-zinc-200">
+                        <p className="text-zinc-400 font-medium text-sm">No surveys in this folder.</p>
+                      </div>
                     )}
-                    <button 
-                      onClick={() => handleEditSurvey(survey)}
-                      className="text-zinc-300 hover:text-indigo-600 transition-colors"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button 
-                      onClick={() => handleDeleteSurvey(survey.id)}
-                      className="text-zinc-300 hover:text-red-500 transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
                   </div>
                 </div>
-                <p className="text-zinc-500 text-sm mb-6 line-clamp-2">{survey.description}</p>
-                <button 
-                  onClick={() => setSelectedSurvey(survey)}
-                  className="w-full bg-zinc-100 text-zinc-900 font-bold py-3 rounded-xl hover:bg-indigo-600 hover:text-white transition-all"
-                >
-                  Manage Survey
-                </button>
+              );
+            })}
+
+            {surveys.filter(s => !s.folderId).length > 0 && (
+              <div className="bg-zinc-50/50 p-6 rounded-[32px] border border-zinc-100">
+                <div className="flex items-center gap-3 mb-6">
+                  <h2 className="text-xl font-bold text-zinc-900">Uncategorized</h2>
+                  <span className="text-sm font-medium text-zinc-500 bg-zinc-200/50 px-2.5 py-0.5 rounded-full">
+                    {surveys.filter(s => !s.folderId).length}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {surveys.filter(s => !s.folderId).map((survey) => (
+                    <div key={survey.id} className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm hover:shadow-md transition-all group">
+                      <div className="flex justify-between items-start mb-4">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-xl font-bold" style={{ color: survey.titleColor || '#18181b' }}>{survey.title}</h3>
+                          {survey.is_public && (
+                            <span className="bg-emerald-50 text-emerald-600 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <Globe className="w-3 h-3" />
+                              PUBLIC
+                            </span>
+                          )}
+                          {survey.language === 'dv' && (
+                            <span className="bg-amber-50 text-amber-600 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                              DV (RTL)
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {survey.is_public && (
+                            <>
+                              <button 
+                                onClick={() => setShowQRModal(survey)}
+                                className="text-zinc-300 hover:text-indigo-600 transition-colors"
+                                title="Show QR Code"
+                              >
+                                <QrCode className="w-4 h-4" />
+                              </button>
+                              <button 
+                                onClick={() => {
+                                  const url = `${window.location.origin}/public/survey/${survey.id}`;
+                                  navigator.clipboard.writeText(url);
+                                  alert('Public link copied to clipboard!');
+                                }}
+                                className="text-zinc-300 hover:text-indigo-600 transition-colors"
+                                title="Copy Public Link"
+                              >
+                                <LinkIcon className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
+                          <button 
+                            onClick={() => handleEditSurvey(survey)}
+                            className="text-zinc-300 hover:text-indigo-600 transition-colors"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteSurvey(survey.id)}
+                            className="text-zinc-300 hover:text-red-500 transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-zinc-500 text-sm mb-6 line-clamp-2">{survey.description}</p>
+                      <button 
+                        onClick={() => setSelectedSurvey(survey)}
+                        className="w-full bg-zinc-100 text-zinc-900 font-bold py-3 rounded-xl hover:bg-indigo-600 hover:text-white transition-all"
+                      >
+                        Manage Survey
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
+            )}
+            
+            {surveys.length === 0 && folders.length === 0 && (
+              <div className="col-span-full text-center py-20 bg-white rounded-3xl border border-dashed border-zinc-200">
+                <ClipboardList className="w-16 h-16 text-zinc-200 mx-auto mb-4" />
+                <p className="text-zinc-400 font-medium">No surveys or folders yet. Create one to get started.</p>
+              </div>
+            )}
           </div>
         ) : (
           <div className="bg-white rounded-3xl border border-zinc-200 overflow-hidden shadow-sm">
@@ -1991,6 +2491,42 @@ const AdminDashboard = () => {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {showCreateFolderModal && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="bg-white w-full max-w-md p-8 rounded-3xl shadow-2xl"
+            >
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-zinc-900">Create Folder</h2>
+                <button onClick={() => setShowCreateFolderModal(false)} className="text-zinc-400 hover:text-zinc-600">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-zinc-700 mb-2">Folder Name</label>
+                  <input 
+                    type="text" 
+                    value={newFolderName}
+                    onChange={(e) => setNewFolderName(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                    placeholder="e.g., Q1 2026 Surveys"
+                  />
+                </div>
+                <button 
+                  onClick={handleCreateFolder}
+                  disabled={!newFolderName.trim()}
+                  className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Create Folder
+                </button>
+              </div>
+            </motion.div>
           </div>
         )}
 
@@ -2079,6 +2615,19 @@ const AdminDashboard = () => {
                   </div>
                 )}
                 <div>
+                  <label className="block text-sm font-bold text-zinc-700 mb-1">Folder</label>
+                  <select 
+                    className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                    value={newSurvey.folderId || ''}
+                    onChange={(e) => setNewSurvey({ ...newSurvey, folderId: e.target.value })}
+                  >
+                    <option value="">Uncategorized</option>
+                    {folders.map(folder => (
+                      <option key={folder.id} value={folder.id}>{folder.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
                   <label className="block text-sm font-bold text-zinc-700 mb-1">Language</label>
                   <select 
                     className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-indigo-500 outline-none"
@@ -2117,7 +2666,16 @@ const AdminDashboard = () => {
                     onClick={() => {
                       setShowCreateModal(false);
                       setEditingSurvey(null);
-                      setNewSurvey({ title: '', description: '', is_public: false, language: 'en' });
+                      setNewSurvey({ 
+                        title: '', 
+                        description: '', 
+                        is_public: false, 
+                        is_enumerator: false, 
+                        allow_multiple_submissions: false,
+                        language: 'en',
+                        titleColor: '#18181b',
+                        folderId: ''
+                      });
                     }}
                     className="flex-1 px-4 py-3 rounded-xl font-bold text-zinc-500 hover:bg-zinc-100 transition-all"
                   >
@@ -2221,6 +2779,24 @@ const AdminDashboard = () => {
             )}
           >
             Stats & Upload
+          </button>
+          <button 
+            onClick={() => setActiveTab('responses')}
+            className={cn(
+              "px-6 py-2 rounded-lg text-sm font-bold transition-all",
+              activeTab === 'responses' ? "bg-white text-indigo-600 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+            )}
+          >
+            Responses
+          </button>
+          <button 
+            onClick={() => setActiveTab('analysis')}
+            className={cn(
+              "px-6 py-2 rounded-lg text-sm font-bold transition-all",
+              activeTab === 'analysis' ? "bg-white text-indigo-600 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+            )}
+          >
+            Analysis Report
           </button>
           <button 
             onClick={() => setActiveTab('preview')}
@@ -2399,6 +2975,78 @@ const AdminDashboard = () => {
         </motion.div>
       )}
 
+      {activeTab === 'responses' && (
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm"
+        >
+          <div className="flex justify-between items-center mb-8">
+            <h2 className="text-xl font-bold text-zinc-900 flex items-center gap-2">
+              <FileText className="w-5 h-5 text-indigo-600" />
+              Individual Responses
+            </h2>
+            <p className="text-sm text-zinc-500">View and manage individual survey submissions</p>
+          </div>
+
+          <div className="space-y-6">
+            {submissionsList.length === 0 ? (
+              <div className="text-center py-12 text-zinc-400">
+                No responses found for this survey.
+              </div>
+            ) : (
+              submissionsList.map((submission, index) => (
+                <div key={submission.submissionId} className="bg-zinc-50 rounded-2xl border border-zinc-100 p-6">
+                  <div className="flex justify-between items-start mb-6 pb-6 border-b border-zinc-200">
+                    <div>
+                      <h3 className="font-bold text-zinc-900">Response #{submissionsList.length - index}</h3>
+                      <div className="flex items-center gap-4 mt-2 text-sm text-zinc-500">
+                        <span>Submitted: {submission.submittedAt?.toDate?.()?.toLocaleString() || 'Unknown'}</span>
+                        {submission.enumeratorUsername && (
+                          <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-md text-xs font-bold">
+                            Enumerator: {submission.enumeratorUsername}
+                          </span>
+                        )}
+                        {submission.userId && !submission.enumeratorUsername && (
+                          <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-md text-xs font-bold">
+                            User ID: {submission.userId}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => handleDeleteSubmission(submission.submissionId)}
+                      className="text-zinc-400 hover:text-red-600 p-2 hover:bg-red-50 rounded-lg transition-colors"
+                      title="Delete Response"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  </div>
+                  
+                  <div className="space-y-6">
+                    {questions.map((q, qIndex) => {
+                      const answer = submission.answers[q.id];
+                      if (!answer) return null;
+                      
+                      return (
+                        <div key={q.id}>
+                          <p className="text-sm font-bold text-zinc-700 mb-2">
+                            {qIndex + 1}. {q.text}
+                          </p>
+                          <div className="bg-white p-4 rounded-xl border border-zinc-200 text-zinc-900">
+                            {answer}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </motion.div>
+      )}
+
       {activeTab === 'stats' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Upload Section */}
@@ -2416,6 +3064,85 @@ const AdminDashboard = () => {
                 <Download className="w-5 h-5" />
                 Download Results (.xlsx)
               </button>
+            </div>
+
+            <div className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm">
+              <h2 className="text-xl font-bold text-zinc-900 mb-6 flex items-center gap-2">
+                <Upload className="w-5 h-5 text-indigo-600" />
+                Upload Responses
+              </h2>
+              <p className="text-sm text-zinc-500 mb-6">
+                Import existing survey responses from an Excel file. Column headers must match question text.
+              </p>
+              
+              <div className="space-y-4">
+                <div className="flex gap-3">
+                  <label className="flex-1">
+                    <div className="border-2 border-dashed border-zinc-200 rounded-2xl p-8 text-center hover:border-indigo-400 transition-colors cursor-pointer group">
+                      <FileSpreadsheet className="w-10 h-10 text-zinc-300 group-hover:text-indigo-400 mx-auto mb-3 transition-colors" />
+                      <span className="text-sm font-medium text-zinc-600 block">
+                        {responsesFile ? responsesFile.name : 'Select Excel File'}
+                      </span>
+                      <input 
+                        type="file" 
+                        accept=".xlsx, .xls" 
+                        className="hidden" 
+                        onChange={(e) => setResponsesFile(e.target.files?.[0] || null)}
+                      />
+                    </div>
+                  </label>
+                  <button 
+                    onClick={() => {
+                      if (!questions || questions.length === 0) {
+                        setResponsesMessage('No questions found. You can upload any Excel file and we will automatically create questions from the column headers.');
+                        return;
+                      }
+                      const wb = XLSX.utils.book_new();
+                      const templateRow: Record<string, string> = {};
+                      questions.forEach(q => {
+                        templateRow[q.text] = q.type === 'mcq' ? (q.options[0]?.text || 'Option 1') : 'Sample Answer';
+                      });
+                      const ws = XLSX.utils.json_to_sheet([templateRow]);
+                      XLSX.utils.book_append_sheet(wb, ws, 'Responses');
+                      const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                      saveAs(new Blob([wbout], { type: 'application/octet-stream' }), 'responses_template.xlsx');
+                    }}
+                    className="p-4 bg-zinc-50 text-zinc-500 rounded-2xl border border-zinc-100 hover:bg-zinc-100 transition-all flex flex-col items-center justify-center gap-2 group"
+                    title="Download Template"
+                  >
+                    <Download className="w-6 h-6 group-hover:text-indigo-600" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider">Template</span>
+                  </button>
+                </div>
+
+                <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100 text-xs text-amber-800 space-y-2">
+                  <p className="font-bold">Important for Import:</p>
+                  <ul className="list-disc list-inside space-y-1">
+                    <li>Column headers must match question text exactly.</li>
+                    <li>For MCQ, use the exact option text.</li>
+                    <li>For Checkboxes, use comma-separated values.</li>
+                    <li>Date format should be YYYY-MM-DD.</li>
+                  </ul>
+                </div>
+
+                <button 
+                  onClick={handleUploadResponses}
+                  disabled={!responsesFile || responsesUploading}
+                  className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+                >
+                  {responsesUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Upload className="w-5 h-5" />}
+                  {responsesUploading ? 'Importing...' : 'Import Now'}
+                </button>
+
+                {responsesMessage && (
+                  <p className={cn(
+                    "text-sm font-medium p-3 rounded-lg text-center",
+                    responsesMessage.includes('Successfully') ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"
+                  )}>
+                    {responsesMessage}
+                  </p>
+                )}
+              </div>
             </div>
 
             <div className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm">
@@ -2628,16 +3355,11 @@ const AdminDashboard = () => {
                     </button>
                   </div>
                   <button 
-                    onClick={generateAIReport}
-                    disabled={generatingReport || stats.length === 0}
-                    className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-sm font-bold hover:bg-indigo-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={() => setActiveTab('analysis')}
+                    className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-sm font-bold hover:bg-indigo-100 transition-all"
                   >
-                    {generatingReport ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Sparkles className="w-4 h-4" />
-                    )}
-                    {generatingReport ? 'Analyzing...' : 'AI Analysis Report'}
+                    <Sparkles className="w-4 h-4" />
+                    Go to Analysis Report
                   </button>
                   <button 
                     onClick={fetchStats}
@@ -2655,16 +3377,56 @@ const AdminDashboard = () => {
                 </div>
               ) : (
                 <div className={cn("space-y-6", isRTL && "font-dhivehi")} dir={isRTL ? 'rtl' : 'ltr'}>
-                  {/* Group stats by question */}
-                  {Array.from(new Set(stats.map(s => s.question_id))).map((qId: number) => {
-                    const qStats = stats.filter(s => s.question_id === qId);
-                    const qText = qStats[0]?.text;
-                    const qType = qStats[0]?.type;
-                    const pref = vizPreferences[qId] || (qType === 'mcq' ? 'bar' : (qType === 'number' ? 'stats' : 'text'));
-                    const totalResponses = qStats.reduce((acc, curr) => acc + curr.count, 0);
+                  {/* Filter UI */}
+                  <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-200 mb-6 flex flex-col sm:flex-row items-center gap-4">
+                    <div className="flex items-center gap-2 text-zinc-500 font-medium whitespace-nowrap">
+                      <Filter className="w-4 h-4" />
+                      <span>Filter by:</span>
+                    </div>
+                    <div className="flex-1 flex flex-col sm:flex-row items-center gap-4 w-full">
+                      <select
+                        className="flex-1 bg-white border border-zinc-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-full"
+                        value={statsFilter?.questionId || ''}
+                        onChange={(e) => setStatsFilter(e.target.value ? { questionId: e.target.value, answer: '' } : null)}
+                      >
+                        <option value="">All Responses (No Filter)</option>
+                        {questions.filter(q => q.type === 'mcq' || q.type === 'checkbox').map(q => (
+                          <option key={q.id} value={q.id}>{q.text}</option>
+                        ))}
+                      </select>
+                      
+                      {statsFilter?.questionId && (
+                        <select
+                          className="flex-1 bg-white border border-zinc-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-full"
+                          value={statsFilter.answer}
+                          onChange={(e) => setStatsFilter({ ...statsFilter, answer: e.target.value })}
+                        >
+                          <option value="">Select Answer...</option>
+                          {questions.find(q => q.id === statsFilter.questionId)?.options.map((opt: any) => (
+                            <option key={opt.text} value={opt.text}>{opt.text}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  </div>
 
-                    return (
-                      <div key={qId} className="question-card border border-zinc-100 rounded-2xl p-6 hover:bg-zinc-50/50 transition-colors bg-white">
+                  {filteredStats.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-[300px] text-zinc-400">
+                      <Filter className="w-12 h-12 mb-4 opacity-20" />
+                      <p>No responses match the selected filter.</p>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Group stats by question */}
+                      {Array.from(new Set(filteredStats.map(s => s.question_id))).map((qId: number) => {
+                        const qStats = filteredStats.filter(s => s.question_id === qId);
+                        const qText = qStats[0]?.text;
+                        const qType = qStats[0]?.type;
+                        const pref = vizPreferences[qId] || (qType === 'mcq' ? 'bar' : (qType === 'number' ? 'stats' : 'text'));
+                        const totalResponses = qStats.reduce((acc, curr) => acc + curr.count, 0);
+
+                        return (
+                          <div key={qId} className="question-card border border-zinc-100 rounded-2xl p-6 hover:bg-zinc-50/50 transition-colors bg-white">
                         <div className="flex justify-between items-start mb-6">
                           <h3 className={cn("font-bold text-zinc-800", isRTL && "text-right")}>{qText}</h3>
                           <div className="flex items-center gap-1 bg-zinc-100 p-1 rounded-lg ml-4">
@@ -2796,8 +3558,153 @@ const AdminDashboard = () => {
                       </div>
                     );
                   })}
+                  </>
+                )}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'analysis' && (
+        <div className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-sm min-h-[600px]">
+          <div className="flex justify-between items-center mb-8">
+            <h2 className="text-xl font-bold text-zinc-900 flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-indigo-600" />
+              AI Analysis Report
+            </h2>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* Options Panel */}
+            <div className="lg:col-span-1 space-y-6">
+              <div className="bg-zinc-50 p-6 rounded-2xl border border-zinc-100 space-y-6">
+                <h3 className="font-bold text-zinc-900">Report Options</h3>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-zinc-700 mb-2">Detail Level</label>
+                    <select 
+                      value={analysisOptions.detailLevel}
+                      onChange={(e) => setAnalysisOptions({...analysisOptions, detailLevel: e.target.value as 'summary' | 'detailed'})}
+                      className="w-full px-4 py-2 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all bg-white"
+                    >
+                      <option value="summary">Summary Only</option>
+                      <option value="detailed">Analyze Each Question Separately</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-sm font-semibold text-zinc-700">Include Data</label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={analysisOptions.includePercentages}
+                        onChange={(e) => setAnalysisOptions({...analysisOptions, includePercentages: e.target.checked})}
+                        className="w-4 h-4 text-indigo-600 rounded border-zinc-300 focus:ring-indigo-500"
+                      />
+                      <span className="text-sm text-zinc-600">Include Percentages</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={analysisOptions.includeNumbers}
+                        onChange={(e) => setAnalysisOptions({...analysisOptions, includeNumbers: e.target.checked})}
+                        className="w-4 h-4 text-indigo-600 rounded border-zinc-300 focus:ring-indigo-500"
+                      />
+                      <span className="text-sm text-zinc-600">Include Numbers (Counts)</span>
+                    </label>
+                  </div>
+
+                  <div className="space-y-2 pt-4 border-t border-zinc-200">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={analysisOptions.compareQuestions}
+                        onChange={(e) => setAnalysisOptions({...analysisOptions, compareQuestions: e.target.checked})}
+                        className="w-4 h-4 text-indigo-600 rounded border-zinc-300 focus:ring-indigo-500"
+                      />
+                      <span className="text-sm font-semibold text-zinc-700">Compare Questions</span>
+                    </label>
+                    
+                    {analysisOptions.compareQuestions && (
+                      <div className="space-y-3 pt-2 pl-6">
+                        <select 
+                          value={analysisOptions.compareQ1}
+                          onChange={(e) => setAnalysisOptions({...analysisOptions, compareQ1: e.target.value})}
+                          className="w-full px-3 py-2 text-sm rounded-lg border border-zinc-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                        >
+                          <option value="">Select Question 1...</option>
+                          {Array.from(new Set(stats.map(s => s.question_id))).map(qId => {
+                            const q = stats.find(s => s.question_id === qId);
+                            return <option key={qId} value={qId}>{q?.text}</option>;
+                          })}
+                        </select>
+                        <div className="text-center text-xs text-zinc-400 font-bold">VS</div>
+                        <select 
+                          value={analysisOptions.compareQ2}
+                          onChange={(e) => setAnalysisOptions({...analysisOptions, compareQ2: e.target.value})}
+                          className="w-full px-3 py-2 text-sm rounded-lg border border-zinc-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                        >
+                          <option value="">Select Question 2...</option>
+                          {Array.from(new Set(stats.map(s => s.question_id))).map(qId => {
+                            const q = stats.find(s => s.question_id === qId);
+                            return <option key={qId} value={qId}>{q?.text}</option>;
+                          })}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-2 pt-4 border-t border-zinc-200">
+                    <label className="block text-sm font-semibold text-zinc-700 mb-2">Additional Instructions (Optional)</label>
+                    <textarea
+                      value={analysisOptions.customPrompt}
+                      onChange={(e) => setAnalysisOptions({...analysisOptions, customPrompt: e.target.value})}
+                      placeholder="E.g., Focus on the sentiment of text responses, or suggest action items based on question 3..."
+                      className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all bg-white resize-none h-24 text-sm"
+                    />
+                  </div>
+                </div>
+
+                <button 
+                  onClick={generateAIReport}
+                  disabled={generatingReport || stats.length === 0}
+                  className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 mt-6"
+                >
+                  {generatingReport ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
+                  {generatingReport ? 'Generating Report...' : 'Generate Report'}
+                </button>
+              </div>
+            </div>
+
+            {/* Report Display */}
+            <div className="lg:col-span-2">
+              <div className="bg-zinc-50 p-8 rounded-3xl border border-zinc-100 min-h-[400px]">
+                {report ? (
+                  <div className={cn("prose prose-indigo max-w-none", isRTL && "font-dhivehi text-right")} dir={isRTL ? 'rtl' : 'ltr'}>
+                    <div className="flex justify-between items-center mb-6">
+                      <h3 className="text-2xl font-bold text-zinc-900 m-0">Analysis Report</h3>
+                      <button 
+                        onClick={handleDownloadWordReport}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-white border border-zinc-200 text-zinc-600 rounded-lg text-sm font-bold hover:bg-zinc-50 transition-all"
+                      >
+                        <Download className="w-4 h-4" />
+                        Export as Word
+                      </button>
+                    </div>
+                    <div className="whitespace-pre-wrap text-zinc-700 leading-relaxed">
+                      {report}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full text-zinc-400 py-20">
+                    <Sparkles className="w-16 h-16 mb-4 opacity-20" />
+                    <p>Select options and click Generate Report to see AI analysis.</p>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

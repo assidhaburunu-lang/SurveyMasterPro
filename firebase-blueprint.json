@@ -24,6 +24,7 @@
         "allow_multiple_submissions": { "type": "boolean" },
         "language": { "type": "string" },
         "projectId": { "type": "string" },
+        "folderId": { "type": "string" },
         "createdBy": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
@@ -88,7 +89,8 @@
         "surveyId": { "type": "string" },
         "questionId": { "type": "string" },
         "answer": { "type": "string" },
-        "submittedAt": { "type": "string", "format": "date-time" }
+        "submittedAt": { "type": "string", "format": "date-time" },
+        "imported": { "type": "boolean" }
       },
       "required": ["submissionId", "surveyId", "questionId", "answer", "submittedAt"]
     },
@@ -113,6 +115,17 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["key", "value", "updatedAt"]
+    },
+    "Folder": {
+      "title": "Folder",
+      "description": "A folder to organize surveys",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "createdBy", "createdAt"]
     }
   },
   "firestore": {
@@ -124,6 +137,7 @@
     "assignments": { "schema": "Assignment", "description": "Survey assignments to users" },
     "projects": { "schema": "Project", "description": "Project definitions" },
     "project_assignments": { "schema": "ProjectAssignment", "description": "Project assignments to users" },
-    "settings": { "schema": "Setting", "description": "Application settings" }
+    "settings": { "schema": "Setting", "description": "Application settings" },
+    "folders": { "schema": "Folder", "description": "Folders for organizing surveys" }
   }
 }

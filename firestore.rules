@@ -123,9 +123,10 @@ service cloud.firestore {
     }
 
     function isValidSurvey(data) {
-      return hasOnlyAllowedFields(['title', 'description', 'is_public', 'is_enumerator', 'language', 'createdBy', 'createdAt', 'isActive', 'is_group', 'allow_multiple_submissions', 'projectId', 'titleColor', 'order']) &&
+      return hasOnlyAllowedFields(['title', 'description', 'is_public', 'is_enumerator', 'language', 'createdBy', 'createdAt', 'isActive', 'is_group', 'allow_multiple_submissions', 'projectId', 'folderId', 'titleColor', 'order']) &&
              data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
              (!('description' in data) || (data.description is string && data.description.size() < 2000)) &&
+             (!('folderId' in data) || data.folderId == null || data.folderId is string) &&
              (!('titleColor' in data) || (data.titleColor is string && data.titleColor.size() <= 20));
     }
 
@@ -139,11 +140,17 @@ service cloud.firestore {
              data.userId is string && data.projectId is string && data.role in ['member', 'manager'];
     }
 
+    function isValidFolder(data) {
+      return hasOnlyAllowedFields(['name', 'createdBy', 'createdAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 200;
+    }
+
     function isValidResponse(data) {
-      return hasOnlyAllowedFields(['userId', 'enumeratorUsername', 'submissionId', 'surveyId', 'questionId', 'answer', 'submittedAt', 'groupUsername']) &&
-             (data.userId == null || data.userId is string) &&
-             (data.enumeratorUsername == null || data.enumeratorUsername is string) &&
-             (data.groupUsername == null || data.groupUsername is string) &&
+      return hasOnlyAllowedFields(['userId', 'enumeratorUsername', 'submissionId', 'surveyId', 'questionId', 'answer', 'submittedAt', 'groupUsername', 'imported']) &&
+             (!('userId' in data) || data.userId == null || data.userId is string) &&
+             (!('enumeratorUsername' in data) || data.enumeratorUsername == null || data.enumeratorUsername is string) &&
+             (!('groupUsername' in data) || data.groupUsername == null || data.groupUsername is string) &&
+             (!('imported' in data) || data.imported is bool) &&
              data.answer is string && data.answer.size() < 5000 &&
              data.surveyId is string && data.questionId is string && data.submissionId is string &&
              data.submittedAt is timestamp;
@@ -225,12 +232,13 @@ service cloud.firestore {
 
     match /responses/{responseId} {
       allow read: if isAdmin() || 
-                  (isAuthenticated() && resource.data.userId == request.auth.uid) ||
+                  (isAuthenticated() && resource.data.get('userId', null) == request.auth.uid) ||
                   (get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_public == true) ||
                   (get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_enumerator == true) ||
                   (get(/databases/$(database)/documents/surveys/$(resource.data.surveyId)).data.is_group == true);
       allow create: if isValidResponse(request.resource.data) && (
-                      (isAuthenticated() && request.resource.data.userId == request.auth.uid) || 
+                      isAdmin() ||
+                      (isAuthenticated() && request.resource.data.get('userId', null) == request.auth.uid) || 
                       (get(/databases/$(database)/documents/surveys/$(request.resource.data.surveyId)).data.is_public == true) ||
                       (get(/databases/$(database)/documents/surveys/$(request.resource.data.surveyId)).data.is_enumerator == true) ||
                       (get(/databases/$(database)/documents/surveys/$(request.resource.data.surveyId)).data.is_group == true)
@@ -245,6 +253,12 @@ service cloud.firestore {
 
     match /settings/{settingId} {
       allow read, write: if isAdmin();
+    }
+
+    match /folders/{folderId} {
+      allow read: if isAdmin() || isAuthenticated();
+      allow create, update: if isAdmin() && isValidFolder(request.resource.data);
+      allow delete: if isAdmin();
     }
   }
 }
