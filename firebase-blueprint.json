@@ -73,6 +73,7 @@
       "type": "object",
       "properties": {
         "questionId": { "type": "string" },
+        "surveyId": { "type": "string" },
         "text": { "type": "string" },
         "nextQuestionOrder": { "type": "integer" },
         "order": { "type": "integer" }

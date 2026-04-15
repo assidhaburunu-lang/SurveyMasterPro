@@ -761,7 +761,9 @@ const AdminDashboard = () => {
     const updateState = () => {
       const combined = questionsData.map(qDoc => ({
         ...qDoc,
-        options: optionsData.filter(o => o.questionId === qDoc.id)
+        options: optionsData
+          .filter(o => o.questionId === qDoc.id)
+          .sort((a, b) => (a.order || 0) - (b.order || 0))
       }));
       setQuestions(combined);
     };
@@ -1039,14 +1041,15 @@ const AdminDashboard = () => {
       batch.set(qRef, questionData);
 
       if (newQuestion.type === 'mcq' || newQuestion.type === 'checkbox') {
-        newQuestion.options.forEach(optText => {
+        newQuestion.options.forEach((optText, index) => {
           if (optText.trim()) {
             const optRef = doc(collection(db, 'options'));
             batch.set(optRef, {
               questionId: qRef.id,
               surveyId: selectedSurvey.id, // Add surveyId for easier fetching
               text: optText.trim(),
-              nextQuestionOrder: null
+              nextQuestionOrder: null,
+              order: index + 1
             });
           }
         });
@@ -1715,6 +1718,35 @@ const AdminDashboard = () => {
     });
   };
 
+  const handleReorderOption = async (questionId: string, optionId: string, direction: 'up' | 'down') => {
+    if (!selectedSurvey) return;
+    try {
+      const q = questions.find(q => q.id === questionId);
+      if (!q || !q.options) return;
+      
+      const currentIdx = q.options.findIndex((o: any) => o.id === optionId);
+      if (currentIdx === -1) return;
+      
+      const targetIdx = direction === 'up' ? currentIdx - 1 : currentIdx + 1;
+      if (targetIdx < 0 || targetIdx >= q.options.length) return;
+      
+      const currentOpt = q.options[currentIdx];
+      const targetOpt = q.options[targetIdx];
+      
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'options', currentOpt.id), { 
+        order: targetOpt.order || targetIdx + 1
+      });
+      batch.update(doc(db, 'options', targetOpt.id), { 
+        order: currentOpt.order || currentIdx + 1
+      });
+      
+      await batch.commit();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, 'options');
+    }
+  };
+
   const handleReorderQuestion = async (id: string, direction: 'up' | 'down') => {
     if (!selectedSurvey) return;
     try {
@@ -1767,7 +1799,8 @@ const AdminDashboard = () => {
             questionId: id,
             surveyId: selectedSurvey.id,
             text: 'Option 1',
-            nextQuestionOrder: null
+            nextQuestionOrder: null,
+            order: 1
           });
         }
       }
@@ -1978,7 +2011,7 @@ const AdminDashboard = () => {
 
           if (q.type === 'mcq' && q.options) {
             const opts = q.options.toString().split(/[,،]/).map((o: string) => o.trim()).filter((o: string) => o);
-            opts.forEach((optStr: string) => {
+            opts.forEach((optStr: string, index: number) => {
               let text = optStr;
               let nextOrder = null;
               const jumpMatch = optStr.match(/\[Jump:(\d+)\]/);
@@ -1991,7 +2024,8 @@ const AdminDashboard = () => {
                 questionId: qRef.id,
                 surveyId: selectedSurvey.id,
                 text: text,
-                nextQuestionOrder: nextOrder
+                nextQuestionOrder: nextOrder,
+                order: index + 1
               });
             });
           }
@@ -3823,9 +3857,25 @@ const AdminDashboard = () => {
                     <div className="space-y-3">
                       {q.options.map((opt: any) => (
                         <div key={opt.id} className={cn("text-sm text-zinc-600 flex flex-col gap-2 p-3 rounded-xl bg-white border border-zinc-100", isRTL && "text-right")}>
-                          <div className={cn("flex items-center gap-2 font-medium", isRTL && "flex-row-reverse")}>
-                            <div className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
-                            {opt.text}
+                          <div className={cn("flex items-center justify-between", isRTL && "flex-row-reverse")}>
+                            <div className={cn("flex items-center gap-2 font-medium", isRTL && "flex-row-reverse")}>
+                              <div className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
+                              {opt.text}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <button 
+                                onClick={() => handleReorderOption(q.id, opt.id, 'up')}
+                                className="p-1 text-zinc-300 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-all"
+                              >
+                                <ChevronUp className="w-3 h-3" />
+                              </button>
+                              <button 
+                                onClick={() => handleReorderOption(q.id, opt.id, 'down')}
+                                className="p-1 text-zinc-300 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-all"
+                              >
+                                <ChevronDown className="w-3 h-3" />
+                              </button>
+                            </div>
                           </div>
                           <div className={cn("flex items-center gap-2", isRTL && "flex-row-reverse")}>
                             <span className="text-[10px] text-zinc-400 uppercase font-bold">{isRTL ? 'ދާންވީ ސުވާލު:' : 'Jump to:'}</span>
@@ -3936,7 +3986,33 @@ const AdminDashboard = () => {
                 <div className="space-y-2">
                   <label className="block text-sm font-bold text-zinc-700 mb-1">{isRTL ? 'އިޚްތިޔާރުތައް' : 'Options'}</label>
                   {newQuestion.options.map((opt, idx) => (
-                    <div key={idx} className="flex gap-2">
+                    <div key={idx} className="flex gap-2 items-center">
+                      <div className="flex flex-col gap-0.5">
+                        <button 
+                          onClick={() => {
+                            if (idx === 0) return;
+                            const newOpts = [...newQuestion.options];
+                            [newOpts[idx - 1], newOpts[idx]] = [newOpts[idx], newOpts[idx - 1]];
+                            setNewQuestion({ ...newQuestion, options: newOpts });
+                          }}
+                          disabled={idx === 0}
+                          className="p-0.5 text-zinc-300 hover:text-indigo-600 disabled:opacity-30"
+                        >
+                          <ChevronUp className="w-3 h-3" />
+                        </button>
+                        <button 
+                          onClick={() => {
+                            if (idx === newQuestion.options.length - 1) return;
+                            const newOpts = [...newQuestion.options];
+                            [newOpts[idx + 1], newOpts[idx]] = [newOpts[idx], newOpts[idx + 1]];
+                            setNewQuestion({ ...newQuestion, options: newOpts });
+                          }}
+                          disabled={idx === newQuestion.options.length - 1}
+                          className="p-0.5 text-zinc-300 hover:text-indigo-600 disabled:opacity-30"
+                        >
+                          <ChevronDown className="w-3 h-3" />
+                        </button>
+                      </div>
                       <input 
                         type="text" 
                         className="flex-1 px-4 py-2 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
@@ -4087,7 +4163,9 @@ const RespondentDashboard = () => {
         return {
           id: qDoc.id,
           ...qData,
-          options: allOptions.filter((o: any) => o.questionId === qDoc.id)
+          options: allOptions
+            .filter((o: any) => o.questionId === qDoc.id)
+            .sort((a: any, b: any) => (a.order || 0) - (b.order || 0))
         };
       });
       setQuestions(questionsData);
@@ -4573,7 +4651,9 @@ const PublicSurvey = () => {
         return {
           id: qDoc.id,
           ...qData,
-          options: allOptions.filter((o: any) => o.questionId === qDoc.id)
+          options: allOptions
+            .filter((o: any) => o.questionId === qDoc.id)
+            .sort((a: any, b: any) => (a.order || 0) - (b.order || 0))
         };
       });
       setQuestions(questionsData);

@@ -164,9 +164,11 @@ service cloud.firestore {
     }
 
     function isValidOption(data) {
-      return hasOnlyAllowedFields(['questionId', 'surveyId', 'text', 'nextQuestionOrder']) &&
-             data.questionId is string && data.surveyId is string && data.text is string &&
-             (!('nextQuestionOrder' in data) || data.nextQuestionOrder == null || data.nextQuestionOrder is int);
+      return hasOnlyAllowedFields(['questionId', 'surveyId', 'text', 'nextQuestionOrder', 'order']) &&
+             data.questionId is string && data.text is string &&
+             (!('surveyId' in data) || data.surveyId is string) &&
+             (!('nextQuestionOrder' in data) || data.nextQuestionOrder == null || data.nextQuestionOrder is int) &&
+             (!('order' in data) || data.order is int || data.order is number);
     }
 
     // ===============================================================
